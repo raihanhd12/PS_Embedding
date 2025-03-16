@@ -47,11 +47,21 @@ async def startup_event():
     # Print configuration
     config.print_config()
 
-    # Initialize database
-    DatabaseService.init_db()
+    # Initialize database (with error handling)
+    try:
+        DatabaseService.init_db()
+        print("Database initialized successfully")
+    except Exception as e:
+        print(f"Database initialization warning: {e}")
+        print("The application will attempt to continue")
 
-    # Initialize vector database
-    init_vector_db()
+    # Initialize vector database (with error handling)
+    try:
+        init_vector_db()
+        print("Vector database initialized successfully")
+    except Exception as e:
+        print(f"Vector database initialization warning: {e}")
+        print("Some functionality may be limited")
 
     print("Embedding API initialized and ready")
 

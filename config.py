@@ -54,3 +54,18 @@ KEYWORD_WEIGHT = float(os.getenv("KEYWORD_WEIGHT", "0.3"))
 # API settings
 API_PORT = int(os.getenv("API_PORT", "8000"))
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
+
+
+def print_config():
+    """Print current configuration settings"""
+    print("\n📋 Current Configuration:")
+    print(f"  • Database: {DB_URL}")
+    print(f"  • Embedding Model: {EMBEDDING_MODEL}")
+    print(f"  • Qdrant: {QDRANT_URL}, Collection: {COLLECTION_NAME}")
+    print(f"  • Elasticsearch: {ES_URL}, Index: {ES_INDEX}")
+    print(f"  • MinIO: {MINIO_ENDPOINT}, Bucket: {MINIO_BUCKET_NAME}")
+    print(f"  • API: {API_HOST}:{API_PORT}")
+    print(
+        f"  • Hybrid Search: {'Enabled' if ENABLE_HYBRID_SEARCH else 'Disabled'}")
+    print(
+        f"  • Text Chunking: Size={DEFAULT_CHUNK_SIZE}, Overlap={DEFAULT_CHUNK_OVERLAP}")

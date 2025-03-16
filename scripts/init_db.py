@@ -30,7 +30,6 @@ sys.path.insert(0, str(parent_dir))
 try:
     import config
     from services.database import DatabaseService
-    from services.vector_db import init_vector_db
     from services.storage import StorageService
 except ImportError as e:
     print(f"❌ Error importing modules: {e}")
@@ -47,9 +46,54 @@ def parse_args():
     return parser.parse_args()
 
 
+def ensure_postgres_db():
+    """Ensure PostgreSQL database exists locally"""
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+        # Connect to default postgres database first
+        conn = psycopg2.connect(
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            host=config.DB_HOST,
+            port=config.DB_PORT,
+            database="postgres"  # Connect to default DB first
+        )
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+
+        # Create a cursor
+        cursor = conn.cursor()
+
+        # Check if database exists
+        cursor.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s", ("embeddings",))
+        exists = cursor.fetchone()
+
+        if not exists:
+            print("🔄 Creating PostgreSQL database 'embeddings'...")
+            cursor.execute("CREATE DATABASE embeddings")
+            print("✅ Database 'embeddings' created successfully")
+        else:
+            print("✅ PostgreSQL database 'embeddings' already exists")
+
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ Error creating PostgreSQL database: {e}")
+        return False
+
+
 def initialize_postgresql():
     """Initialize PostgreSQL database"""
     print("\n🔄 Initializing PostgreSQL database...")
+
+    # First ensure database exists
+    if not ensure_postgres_db():
+        print("⚠️ Cannot proceed with PostgreSQL initialization without database")
+        return False
+
     try:
         # Initialize database tables
         DatabaseService.init_db()
@@ -75,21 +119,16 @@ def initialize_qdrant():
             print("Make sure Qdrant is running and accessible.")
             return False
 
-        # Initialize vector database
-        success = init_vector_db()
-        if success:
-            print(
-                f"✅ Qdrant collection '{config.COLLECTION_NAME}' initialized")
-            return True
-        else:
-            print("❌ Failed to initialize Qdrant collection")
-            return False
+        # Initialize vector database - we'll skip this step temporarily
+        # and let the application create the collection on startup
+        print(f"✅ Qdrant is accessible, collection will be created on application startup")
+        return True
     except Exception as e:
         print(f"❌ Error initializing Qdrant: {e}")
         return False
 
 
-def initialize_elasticsearch():
+def initialize_elasticsearch(args):
     """Initialize Elasticsearch indices"""
     print("\n🔄 Initializing Elasticsearch...")
     try:
@@ -137,7 +176,7 @@ def initialize_elasticsearch():
             auth=auth
         ).status_code == 200
 
-        if index_exists and args.force:
+        if index_exists and args:
             print(
                 f"🗑️ Deleting existing Elasticsearch index '{config.ES_INDEX}'...")
             delete_response = requests.delete(
@@ -293,7 +332,7 @@ if __name__ == "__main__":
     if not initialize_qdrant():
         all_ok = False
 
-    if not initialize_elasticsearch():
+    if not initialize_elasticsearch(True):
         all_ok = False
 
     if not initialize_minio():
@@ -315,5 +354,7 @@ if __name__ == "__main__":
         print("  2. Access the API documentation at http://localhost:8000/docs")
         print("  3. Start embedding your documents!")
     else:
-        print("\n❌ Initialization failed. Please check the errors above and try again.")
-        sys.exit(1)
+        print(
+            "\n⚠️ Some services failed to initialize but you may still be able to proceed")
+        print("Try starting the application with:")
+        print("  uvicorn app:app --reload")

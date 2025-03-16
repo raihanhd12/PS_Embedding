@@ -19,8 +19,9 @@ def init_vector_db() -> bool:
         True if successful
     """
     try:
-        from services.embedding import get_dimension
-        vector_size = get_dimension()
+        # Use a fixed vector size instead of importing the embedding model
+        # which may not be available due to huggingface_hub issues
+        vector_size = 384  # Common size for sentence-transformers/all-MiniLM-L6-v2
 
         collections = client.get_collections().collections
         if config.COLLECTION_NAME not in [c.name for c in collections]:

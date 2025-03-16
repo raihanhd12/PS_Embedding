@@ -87,48 +87,90 @@ async def process_document(
     Returns:
         Dictionary with processing results
     """
-    # Extract text
-    text = extract_text_from_file(file_content, content_type)
-    if not text:
-        raise ValueError("Could not extract text from file")
+    try:
+        # Extract text
+        text = extract_text_from_file(file_content, content_type)
+        if not text:
+            raise ValueError("Could not extract text from file")
 
-    # Split into chunks
-    chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
-    if not chunks:
-        raise ValueError("No text chunks generated")
+        # Split into chunks
+        chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
+        if not chunks:
+            raise ValueError("No text chunks generated")
 
-    # Initialize metadata
-    if base_metadata is None:
-        base_metadata = {}
+        # Initialize metadata
+        if base_metadata is None:
+            base_metadata = {}
 
-    # Add file info to metadata
-    file_id = str(uuid.uuid4())
-    base_metadata.update({
-        "filename": filename,
-        "content_type": content_type,
-        "file_id": file_id
-    })
+        # Get document ID from metadata if it exists
+        document_id = base_metadata.get("file_id")
+        if not document_id:
+            print("Warning: No document ID provided in metadata")
+            document_id = str(uuid.uuid4())
+            base_metadata["file_id"] = document_id
 
-    # Create metadata for each chunk
-    metadata_list = []
-    for i, chunk in enumerate(chunks):
-        chunk_metadata = base_metadata.copy()
-        chunk_metadata.update({
-            "chunk_index": i,
-            "text": chunk
-        })
-        metadata_list.append(chunk_metadata)
+        print(
+            f"Processing document ID: {document_id} with {len(chunks)} chunks")
 
-    # Generate embeddings
-    embeddings = embed_texts(chunks)
+        # Create a database service instance
+        from services.database import DatabaseService
+        db_service = DatabaseService()
 
-    # Generate IDs and store in vector DB
-    ids = [str(uuid.uuid4()) for _ in chunks]
-    store_vectors(embeddings, metadata_list, ids)
+        # Create metadata and save each chunk to database
+        vector_ids = []
+        for i, chunk_text in enumerate(chunks):
+            try:
+                # Create chunk metadata
+                chunk_metadata = base_metadata.copy()
+                chunk_metadata.update({
+                    "chunk_index": i,
+                    "filename": filename,
+                    "content_type": content_type
+                })
 
-    return {
-        "filename": filename,
-        "chunks": len(chunks),
-        "vector_ids": ids,
-        "file_id": file_id
-    }
+                # First save chunk to database
+                print(f"Saving chunk {i} to database")
+                chunk = db_service.create_document_chunk(
+                    document_id=document_id,
+                    chunk_index=i,
+                    text=chunk_text,
+                    metadata=chunk_metadata
+                )
+
+                # Generate embedding - using the proper return structure
+                print(f"Creating embedding for chunk {i}")
+                embedding_result = create_embeddings([chunk_text])
+
+                # Extract the embedding from the result
+                if "embeddings" in embedding_result and embedding_result["embeddings"]:
+                    embedding = embedding_result["embeddings"][0]
+
+                    # Generate ID and store in vector DB
+                    vector_id = str(uuid.uuid4())
+                    print(f"Storing vector with ID: {vector_id}")
+                    store_vectors([embedding], [chunk_metadata], [vector_id])
+                    vector_ids.append(vector_id)
+
+                    # Update the chunk in database with embedding ID
+                    db_service.update_chunk_embedding(chunk.id, vector_id)
+                    print(f"Chunk {i} processed with vector ID: {vector_id}")
+                else:
+                    print(f"Warning: No embedding generated for chunk {i}")
+
+            except Exception as chunk_error:
+                print(f"Error processing chunk {i}: {str(chunk_error)}")
+                import traceback
+                traceback.print_exc()
+                # Continue processing other chunks
+
+        return {
+            "filename": filename,
+            "chunks": len(chunks),
+            "vector_ids": vector_ids,
+            "file_id": document_id
+        }
+    except Exception as e:
+        print(f"Error in process_document: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise

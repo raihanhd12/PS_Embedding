@@ -7,6 +7,7 @@ import uuid
 from minio import Minio
 from minio.error import S3Error
 import os
+import tempfile
 
 # MinIO configuration
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
@@ -167,3 +168,24 @@ class StorageService:
         except S3Error as e:
             print(f"Error listing objects: {e}")
             return []
+
+    def get_file_path(self, storage_path):
+        """
+        Get a local file path for a stored file
+
+        Args:
+            storage_path: The storage path of the file
+
+        Returns:
+            str: Path to a temporary local file
+        """
+        # Get the file content
+        file_content = self.get_file_content(storage_path)
+        if not file_content:
+            raise FileNotFoundError(f"File not found: {storage_path}")
+
+        # Create a temporary file with the proper extension
+        _, ext = os.path.splitext(storage_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+            temp_file.write(file_content)
+            return temp_file.name
