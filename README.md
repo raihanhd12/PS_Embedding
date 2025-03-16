@@ -39,17 +39,21 @@ embedding_api/
 ├── api/                      # API routes
 │   ├── __init__.py
 │   └── endpoints.py          # API endpoints
-└── utils/                    # Utilities
+├── utils/                    # Utilities
+│   ├── __init__.py
+│   └── file_utils.py         # File handling utilities
+└── scripts/                  # Utility scripts
     ├── __init__.py
-    └── file_utils.py         # File handling utilities
+    ├── init_db.py            # Database initialization script
+    └── reset_db.py           # Database reset script
 ```
 
 ## Getting Started
 
 ### Prerequisites
 
-- Python 3.8+
-- PostgreSQL
+- Python 3.10+
+- PostgreSQL (optional, can be run in Docker)
 - Qdrant
 - Elasticsearch
 - MinIO
@@ -67,26 +71,35 @@ embedding_api/
 ### Local Development Setup
 
 1. Install dependencies:
+
    ```
    pip install -r requirements.txt
    ```
 
-2. Start the required services:
-   - PostgreSQL database
-   - Qdrant vector database
-   - Elasticsearch
-   - MinIO
+2. Start the required services using Docker Compose:
 
-3. Start the API server:
+   ```
+   docker-compose up -d qdrant elasticsearch kibana minio
+   ```
+
+3. Initialize databases (optional):
+
+   ```
+   python scripts/init_db.py
+   ```
+
+4. Start the API server:
+
    ```
    uvicorn app:app --reload
    ```
 
-4. Access the API documentation at http://localhost:8000/docs
+5. Access the API documentation at http://localhost:8000/docs
 
 ### Docker Setup
 
 1. Build and start all services using Docker Compose:
+
    ```
    docker-compose up -d
    ```
@@ -109,26 +122,65 @@ embedding_api/
 
 ### Document Processing
 
-- `POST /api/upload-embed` - Upload, process, and embed document
+- `POST /api/upload/batch` - Upload multiple documents in a single request
+
   - Form data:
-    - `file`: Document file (PDF, DOCX, TXT)
-    - `chunk_size`: Size of text chunks (optional)
-    - `chunk_overlap`: Overlap between chunks (optional)
+    - `files`: List of document files (PDF, DOCX, TXT)
     - `metadata`: JSON string with additional metadata (optional)
+
+- `POST /api/embedding/batch` - Process and embed multiple documents
+  - Request body:
+    ```json
+    {
+      "file_ids": ["id1", "id2", ...],
+      "chunk_size": 1000,
+      "chunk_overlap": 200,
+      "additional_metadata": {"key": "value"}
+    }
+    ```
 
 ### Vector Search
 
-- `POST /api/search` - Search for similar text
+- `POST /api/search` - Search for similar text using hybrid search (vector + keyword)
   - Request body:
     ```json
     {
       "query": "your search query",
       "limit": 5,
-      "filter_metadata": {"key": "value"}
+      "filter_metadata": { "key": "value" }
     }
     ```
 
 ### Document Management
 
-- `DELETE /api/vectors/{vector_id}` - Delete specific vector
-- `DELETE /api/documents/{file_id}` - Delete document and all associated vectors
+- `GET /api/documents` - Get a list of all documents
+
+  - Query parameters:
+    - `limit`: Maximum number of documents (default: 100)
+    - `offset`: Pagination offset (default: 0)
+
+- `GET /api/documents/{document_id}` - Get a specific document by ID
+
+- `DELETE /api/documents/batch` - Delete multiple documents and all associated data
+  - Request body:
+    ```json
+    ["document_id1", "document_id2", ...]
+    ```
+
+## Hybrid Search
+
+The API supports hybrid search that combines vector similarity (embeddings) and keyword matching (Elasticsearch) for improved search results. The weights between vector and keyword search can be configured in the `.env` file:
+
+```
+ENABLE_HYBRID_SEARCH=True
+VECTOR_WEIGHT=0.7
+KEYWORD_WEIGHT=0.3
+```
+
+## Admin Interfaces
+
+- Qdrant Dashboard: http://localhost:6333/dashboard
+- Kibana (Elasticsearch): http://localhost:5601
+- MinIO Console: http://localhost:9001
+  - Username: minioadmin
+  - Password: minioadmin
