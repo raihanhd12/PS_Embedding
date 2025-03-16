@@ -9,28 +9,12 @@ from config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 # Request models
 
 
-class TextEmbeddingRequest(BaseModel):
-    """Request model for text embedding"""
-    texts: List[str] = Field(..., description="List of texts to embed")
-    metadata: Optional[List[Dict[str, Any]]] = Field(
-        None, description="Optional metadata for each text")
-    store: bool = Field(
-        False, description="Whether to store embeddings in vector DB")
-
-
 class SearchRequest(BaseModel):
     """Request model for vector search"""
     query: str = Field(..., description="Search query text")
     limit: int = Field(5, description="Maximum number of results to return")
     filter_metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Optional metadata filters")
-
-
-class FileProcessRequest(BaseModel):
-    file_id: str
-    chunk_size: Optional[int] = DEFAULT_CHUNK_SIZE
-    chunk_overlap: Optional[int] = DEFAULT_CHUNK_OVERLAP
-    additional_metadata: Optional[Dict[str, Any]] = None
+        None, description="Optional metadata filters with multiple conditions")
 
 
 class EmbeddingDocumentRequest(BaseModel):
@@ -56,16 +40,6 @@ class ChunkSearchResult(BaseModel):
 class SearchResponse(BaseModel):
     """Response model for search results"""
     results: List[ChunkSearchResult] = Field(..., description="Search results")
-
-
-class EmbeddingResponse(BaseModel):
-    """Response model for embedding results"""
-    count: int = Field(..., description="Number of embeddings")
-    dimension: int = Field(..., description="Embedding dimension")
-    vector_ids: Optional[List[str]] = Field(
-        None, description="Vector IDs if stored")
-    embeddings: Optional[List[List[float]]] = Field(
-        None, description="Raw embeddings if not stored")
 
 
 class DocumentUploadResponse(BaseModel):
@@ -106,18 +80,6 @@ class DocumentListResponse(BaseModel):
     total: int = Field(..., description="Total number of documents")
     limit: int = Field(..., description="Limit used for pagination")
     offset: int = Field(..., description="Offset used for pagination")
-
-
-class DocumentChunkResponse(BaseModel):
-    """Response model for a document chunk"""
-    id: str = Field(..., description="Chunk ID")
-    document_id: str = Field(..., description="Parent document ID")
-    chunk_index: int = Field(..., description="Chunk index in document")
-    text: str = Field(..., description="Chunk text content")
-    embedding_id: Optional[str] = Field(
-        None, description="Vector DB embedding ID")
-    metadata: Optional[Dict[str, Any]] = Field(
-        None, description="Chunk metadata")
 
 
 class MultiDocumentUploadResponse(BaseModel):

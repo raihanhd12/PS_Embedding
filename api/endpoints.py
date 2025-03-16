@@ -1,39 +1,28 @@
 """
 API endpoints for the Embedding API with multi-file support
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body, Query, Response
-from typing import Dict, Any, Optional, List
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body, Query
+from typing import Optional, List
 import json
-import uuid
-import tempfile
-import os
 import asyncio
 
 from models.schemas import (
-    TextEmbeddingRequest,
     SearchRequest,
     SearchResponse,
-    EmbeddingResponse,
-    DocumentProcessResponse,
     ChunkSearchResult,
-    DocumentUploadResponse,
-    FileProcessRequest,
     DocumentResponse,
     DocumentListResponse,
-    DocumentChunkResponse,
-    EmbeddingDocumentRequest,
     MultiDocumentUploadResponse,
     MultiDocumentProcessResponse,
     MultiEmbeddingDocumentRequest
 )
-from services.embedding import create_embeddings, embed_texts
-from services.vector_db import search_vectors, delete_vector, delete_vectors_by_filter
+from services.embedding import embed_texts
+from services.vector_db import search_vectors, delete_vectors_by_filter
 from services.text_processor import process_document
 from services.storage import StorageService
 from services.elasticsearch import ElasticsearchService
 from services.database import DatabaseService
 from config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
-from pydantic import BaseModel
 
 # Create API router
 router = APIRouter(prefix="/api")
@@ -215,12 +204,14 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
 async def search_endpoint(request: SearchRequest):
     """
     Search for similar text based on semantic similarity
+
+    Supports multiple filter conditions in filter_metadata
     """
     try:
         # Generate embedding for query
         query_embedding = embed_texts([request.query])[0]
 
-        # Search vectors
+        # Search vectors with filter conditions
         search_results = search_vectors(
             query_vector=query_embedding,
             limit=request.limit,

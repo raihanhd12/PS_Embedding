@@ -85,7 +85,7 @@ def search_vectors(
     Args:
         query_vector: Query embedding vector
         limit: Maximum number of results
-        filter_conditions: Optional filter conditions
+        filter_conditions: Optional filter conditions that can include multiple values
 
     Returns:
         List of search results
@@ -94,14 +94,36 @@ def search_vectors(
         # Build filter if provided
         filter_query = None
         if filter_conditions:
-            filter_query = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key=key,
-                        match=models.MatchValue(value=value)
+            filter_conditions_list = []
+            for key, value in filter_conditions.items():
+                # Handle multiple values for a single field
+                if isinstance(value, list):
+                    # For arrays, create a should clause (logical OR)
+                    should_conditions = []
+                    for val in value:
+                        should_conditions.append(
+                            models.FieldCondition(
+                                key=key,
+                                match=models.MatchValue(value=val)
+                            )
+                        )
+                    filter_conditions_list.append(
+                        models.Filter(
+                            should=should_conditions
+                        )
                     )
-                    for key, value in filter_conditions.items()
-                ]
+                else:
+                    # For single values, create a regular must clause
+                    filter_conditions_list.append(
+                        models.FieldCondition(
+                            key=key,
+                            match=models.MatchValue(value=value)
+                        )
+                    )
+
+            # Create the final filter with all conditions
+            filter_query = models.Filter(
+                must=filter_conditions_list
             )
 
         # Search in Qdrant
