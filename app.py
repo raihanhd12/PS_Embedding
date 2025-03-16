@@ -1,0 +1,64 @@
+"""
+Main application entry point for Embedding API
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+# Import config and services
+import config
+from services.database import DatabaseService
+from services.vector_db import init_vector_db
+from api.endpoints import router as api_router
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Embedding API",
+    description="API for text embedding and vector search",
+    version="1.0.0",
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For development - restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API routes
+app.include_router(api_router)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "Embedding API",
+        "documentation": "/docs",
+        "version": "1.0.0"
+    }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize resources on application startup"""
+    # Print configuration
+    config.print_config()
+
+    # Initialize database
+    DatabaseService.init_db()
+
+    # Initialize vector database
+    init_vector_db()
+
+    print("Embedding API initialized and ready")
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "app:app",
+        host=config.API_HOST,
+        port=config.API_PORT,
+        reload=True
+    )
