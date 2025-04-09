@@ -4,10 +4,10 @@ Text processing service for extraction and chunking
 from typing import List, Dict, Any, Optional
 import uuid
 
-import config
-from utils.file_utils import extract_text_from_file
-from services.embedding import embed_texts, create_embeddings
-from services.vector_db import store_vectors
+import app.config as config
+from app.utils.file_utils import extract_text_from_file
+from app.services.embedding import embed_texts, create_embeddings
+from app.services.vector_db import store_vectors
 
 
 def split_text_into_chunks(

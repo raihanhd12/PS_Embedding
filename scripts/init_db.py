@@ -28,7 +28,7 @@ sys.path.insert(0, str(parent_dir))
 
 # Import configuration and services
 try:
-    import config
+    import app.config as config
     from services.database import DatabaseService
     from services.storage import StorageService
 except ImportError as e:

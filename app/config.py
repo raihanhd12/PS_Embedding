@@ -52,9 +52,8 @@ VECTOR_WEIGHT = float(os.getenv("VECTOR_WEIGHT", "0.7"))
 KEYWORD_WEIGHT = float(os.getenv("KEYWORD_WEIGHT", "0.3"))
 
 # API settings
-API_PORT = int(os.getenv("API_PORT", "8000"))
+API_PORT = int(os.getenv("API_PORT", "8001"))
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
-
 
 def print_config():
     """Print current configuration settings"""

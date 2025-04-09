@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
 import datetime
 
-import config
+import app.config as config
 
 # Create SQLAlchemy engine with fallback to SQLite for development
 try:

@@ -31,7 +31,7 @@ sys.path.insert(0, str(parent_dir))
 
 # Import configuration and services
 try:
-    import config
+    import app.config as config
     from services.database import Base, engine, DatabaseService
     from services.vector_db import init_vector_db
     from services.storage import StorageService

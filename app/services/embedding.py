@@ -5,8 +5,8 @@ from typing import List, Dict, Any, Optional
 import uuid
 from sentence_transformers import SentenceTransformer
 
-import config
-from services.vector_db import store_vectors
+import app.config as config
+from app.services.vector_db import store_vectors
 
 # Initialize embedding model
 model = SentenceTransformer(config.EMBEDDING_MODEL)

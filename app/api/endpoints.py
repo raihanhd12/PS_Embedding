@@ -6,7 +6,7 @@ from typing import Optional, List
 import json
 import asyncio
 
-from models.schemas import (
+from app.models.schemas import (
     SearchRequest,
     SearchResponse,
     ChunkSearchResult,
@@ -16,13 +16,13 @@ from models.schemas import (
     MultiDocumentProcessResponse,
     MultiEmbeddingDocumentRequest
 )
-from services.embedding import embed_texts
-from services.vector_db import search_vectors, delete_vectors_by_filter
-from services.text_processor import process_document
-from services.storage import StorageService
-from services.elasticsearch import ElasticsearchService
-from services.database import DatabaseService
-from config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
+from app.services.embedding import embed_texts
+from app.services.vector_db import search_vectors, delete_vectors_by_filter
+from app.services.text_processor import process_document
+from app.services.storage import StorageService
+from app.services.elasticsearch import ElasticsearchService
+from app.services.database import DatabaseService
+from app.config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 
 # Create API router
 router = APIRouter(prefix="/api")

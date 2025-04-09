@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-import config
+import app.config as config
 
 # Initialize Qdrant client
 client = QdrantClient(url=config.QDRANT_URL)

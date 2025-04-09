@@ -6,10 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Import config and services
-import config
-from services.database import DatabaseService
-from services.vector_db import init_vector_db
-from api.endpoints import router as api_router
+import app.config as config
+from app.services.database import DatabaseService
+from app.services.vector_db import init_vector_db
+from app.api.endpoints import router as api_router
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -67,7 +67,7 @@ async def startup_event():
 
 if __name__ == "__main__":
     uvicorn.run(
-        "app:app",
+        "main:app",  # Perbaikan disini dari "app:main" menjadi "main:app"
         host=config.API_HOST,
         port=config.API_PORT,
         reload=True
