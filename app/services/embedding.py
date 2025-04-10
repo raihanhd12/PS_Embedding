@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 import uuid
 from sentence_transformers import SentenceTransformer
 
-import app.config as config
+import app.utils.config as config
 from app.services.vector_db import store_vectors
 
 # Initialize embedding model

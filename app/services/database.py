@@ -2,26 +2,25 @@
 Database service using SQLAlchemy for PostgreSQL
 """
 
-from typing import List, Dict, Any, Optional
-import uuid
+import datetime
 import os
-import sys
+import uuid
+from typing import Any, Dict, List, Optional
+
 from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    Integer,
-    ForeignKey,
-    Text,
     JSON,
+    Column,
     DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
 )
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
-from sqlalchemy.sql import func
-import datetime
+from sqlalchemy.orm import relationship, sessionmaker
 
-import app.config as config
+import app.utils.config as config
 
 # Create SQLAlchemy engine with fallback to SQLite for development
 try:
@@ -65,8 +64,7 @@ class DocumentChunk(Base):
     __tablename__ = "document_chunks"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    document_id = Column(String, ForeignKey(
-        "documents.id", ondelete="CASCADE"))
+    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"))
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding_id = Column(String, nullable=True)  # ID in vector DB
@@ -108,7 +106,8 @@ class DatabaseService:
                     filename=filename,
                     content_type=content_type,
                     storage_path=storage_path,
-                    doc_metadata=metadata or {},  # Use doc_metadata field name from model
+                    doc_metadata=metadata
+                    or {},  # Use doc_metadata field name from model
                 )
                 print(f"Mencoba menyimpan dokumen dengan ID: {document.id}")
                 session.add(document)
@@ -183,8 +182,7 @@ class DatabaseService:
         try:
             with SessionLocal() as session:
                 document = (
-                    session.query(Document).filter(
-                        Document.id == document_id).first()
+                    session.query(Document).filter(Document.id == document_id).first()
                 )
                 if not document:
                     return None
@@ -287,8 +285,7 @@ class DatabaseService:
         try:
             with SessionLocal() as session:
                 document = (
-                    session.query(Document).filter(
-                        Document.id == document_id).first()
+                    session.query(Document).filter(Document.id == document_id).first()
                 )
                 if not document:
                     return False

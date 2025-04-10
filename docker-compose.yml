@@ -1,28 +1,28 @@
 version: "3.8"
 
 services:
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-    depends_on:
-      # - postgres
-      - qdrant
-      - elasticsearch
-      - minio
-    environment:
-      # - POSTGRES_HOST=postgres
-      # - POSTGRES_PORT=5432
-      # - POSTGRES_USER=postgres
-      # - POSTGRES_PASSWORD=postgres
-      # - POSTGRES_DB=embeddings
-      - QDRANT_URL=http://qdrant:6333
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+  # api:
+  #   build: .
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - .:/app
+  #   depends_on:
+  #     # - postgres
+  #     - qdrant
+  #     - elasticsearch
+  #     - minio
+  #   environment:
+  #     # - POSTGRES_HOST=postgres
+  #     # - POSTGRES_PORT=5432
+  #     # - POSTGRES_USER=postgres
+  #     # - POSTGRES_PASSWORD=postgres
+  #     # - POSTGRES_DB=embeddings
+  #     - QDRANT_URL=http://qdrant:6333
+  #     - ELASTICSEARCH_URL=http://elasticsearch:9200
+  #     - MINIO_ENDPOINT=minio:9000
+  #     - MINIO_ACCESS_KEY=minioadmin
+  #     - MINIO_SECRET_KEY=minioadmin
 
   # postgres:
   #   image: postgres:14

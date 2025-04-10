@@ -4,7 +4,7 @@ Pydantic models for request and response schemas
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from app.config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
+from app.utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 
 # Request model
 class SearchRequest(BaseModel):
