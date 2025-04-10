@@ -1,8 +1,14 @@
 """
 Text embedding service using sentence-transformers
 """
-from typing import List, Dict, Any, Optional
+
+import os
 import uuid
+from typing import Any, Dict, List, Optional
+
+# Set environment variable to disable tokenizers parallelism warning
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from sentence_transformers import SentenceTransformer
 
 import app.utils.config as config
@@ -32,14 +38,20 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         return []
 
     # Generate embeddings
-    embeddings = model.encode(texts, convert_to_numpy=True).tolist()
+    embeddings = model.encode(
+        texts,
+        convert_to_numpy=True,
+        show_progress_bar=False,  # Disable progress bar to reduce log noise
+        batch_size=32,  # Explicitly set batch size for better control
+    ).tolist()
+
     return embeddings
 
 
 def create_embeddings(
     texts: List[str],
     metadata: Optional[List[Dict[str, Any]]] = None,
-    store: bool = False
+    store: bool = False,
 ) -> Dict[str, Any]:
     """
     Embed texts and optionally store in vector database
@@ -64,8 +76,7 @@ def create_embeddings(
     if store:
         # Ensure we have metadata for each text
         if not metadata or len(metadata) != len(texts):
-            metadata_list = [
-                {"text": text, "id": str(uuid.uuid4())} for text in texts]
+            metadata_list = [{"text": text, "id": str(uuid.uuid4())} for text in texts]
         else:
             metadata_list = metadata
             # Ensure each metadata item has the text
