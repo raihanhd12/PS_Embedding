@@ -1,11 +1,13 @@
 """
 Vector database service using Qdrant
 """
-from typing import List, Dict, Any, Optional
+
+from typing import Any, Dict, List, Optional
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-import app.config as config
+import app.utils.config as config
 
 # Initialize Qdrant client
 client = QdrantClient(url=config.QDRANT_URL)
@@ -28,9 +30,8 @@ def init_vector_db() -> bool:
             client.create_collection(
                 collection_name=config.COLLECTION_NAME,
                 vectors_config=models.VectorParams(
-                    size=vector_size,
-                    distance=models.Distance.COSINE
-                )
+                    size=vector_size, distance=models.Distance.COSINE
+                ),
             )
             print(f"Created collection: {config.COLLECTION_NAME}")
         return True
@@ -40,9 +41,7 @@ def init_vector_db() -> bool:
 
 
 def store_vectors(
-    vectors: List[List[float]],
-    metadata_list: List[Dict[str, Any]],
-    ids: List[str]
+    vectors: List[List[float]], metadata_list: List[Dict[str, Any]], ids: List[str]
 ) -> List[str]:
     """
     Store vectors in Qdrant
@@ -63,10 +62,7 @@ def store_vectors(
         ]
 
         # Store in Qdrant
-        client.upsert(
-            collection_name=config.COLLECTION_NAME,
-            points=points
-        )
+        client.upsert(collection_name=config.COLLECTION_NAME, points=points)
 
         return ids
     except Exception as e:
@@ -77,7 +73,7 @@ def store_vectors(
 def search_vectors(
     query_vector: List[float],
     limit: int = 5,
-    filter_conditions: Optional[Dict[str, Any]] = None
+    filter_conditions: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Search for similar vectors
@@ -103,35 +99,29 @@ def search_vectors(
                     for val in value:
                         should_conditions.append(
                             models.FieldCondition(
-                                key=key,
-                                match=models.MatchValue(value=val)
+                                key=key, match=models.MatchValue(value=val)
                             )
                         )
                     filter_conditions_list.append(
-                        models.Filter(
-                            should=should_conditions
-                        )
+                        models.Filter(should=should_conditions)
                     )
                 else:
                     # For single values, create a regular must clause
                     filter_conditions_list.append(
                         models.FieldCondition(
-                            key=key,
-                            match=models.MatchValue(value=value)
+                            key=key, match=models.MatchValue(value=value)
                         )
                     )
 
             # Create the final filter with all conditions
-            filter_query = models.Filter(
-                must=filter_conditions_list
-            )
+            filter_query = models.Filter(must=filter_conditions_list)
 
         # Search in Qdrant
         search_results = client.search(
             collection_name=config.COLLECTION_NAME,
             query_vector=query_vector,
             limit=limit,
-            query_filter=filter_query
+            query_filter=filter_query,
         )
 
         # Format results
@@ -139,7 +129,7 @@ def search_vectors(
             {
                 "id": str(result.id),
                 "score": float(result.score),
-                "metadata": result.payload
+                "metadata": result.payload,
             }
             for result in search_results
         ]
@@ -161,9 +151,7 @@ def delete_vector(vector_id: str) -> bool:
     try:
         client.delete(
             collection_name=config.COLLECTION_NAME,
-            points_selector=models.PointIdsList(
-                points=[vector_id]
-            )
+            points_selector=models.PointIdsList(points=[vector_id]),
         )
         return True
     except Exception as e:
@@ -185,10 +173,7 @@ def delete_vectors_by_filter(filter_conditions: Dict[str, Any]) -> bool:
         # Build filter
         filter_query = models.Filter(
             must=[
-                models.FieldCondition(
-                    key=key,
-                    match=models.MatchValue(value=value)
-                )
+                models.FieldCondition(key=key, match=models.MatchValue(value=value))
                 for key, value in filter_conditions.items()
             ]
         )
@@ -196,9 +181,7 @@ def delete_vectors_by_filter(filter_conditions: Dict[str, Any]) -> bool:
         # Delete from Qdrant
         client.delete(
             collection_name=config.COLLECTION_NAME,
-            points_selector=models.FilterSelector(
-                filter=filter_query
-            )
+            points_selector=models.FilterSelector(filter=filter_query),
         )
         return True
     except Exception as e:

@@ -1,28 +1,8 @@
-#!/usr/bin/env python
-"""
-Database reset script for the Embedding API
-
-This script completely resets all databases and services:
-- PostgreSQL database tables
-- Qdrant vector database collections
-- Elasticsearch indices
-- MinIO buckets
-
-WARNING: This will delete all your data!
-
-Usage:
-    python scripts/reset_db.py [--confirm]
-
-Options:
-    --confirm   Confirm that you want to delete all data
-"""
-import os
-import sys
-import time
 import argparse
+import sys
 from pathlib import Path
+
 import requests
-import sqlalchemy
 
 # Add the parent directory to the path so we can import the app modules
 current_dir = Path(__file__).resolve().parent
@@ -31,10 +11,10 @@ sys.path.insert(0, str(parent_dir))
 
 # Import configuration and services
 try:
-    import app.config as config
-    from services.database import Base, engine, DatabaseService
-    from services.vector_db import init_vector_db
-    from services.storage import StorageService
+    import app.utils.config as config
+    from app.services.database import Base, DatabaseService, engine
+    from app.services.storage import StorageService
+    from app.services.vector_db import init_vector_db
 except ImportError as e:
     print(f"❌ Error importing modules: {e}")
     print("Make sure you're running this script from the project root.")
@@ -44,9 +24,13 @@ except ImportError as e:
 def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Reset all databases for the Embedding API")
-    parser.add_argument("--confirm", action="store_true",
-                        help="Confirm that you want to delete all data")
+        description="Reset all databases for the Embedding API"
+    )
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Confirm that you want to delete all data",
+    )
     return parser.parse_args()
 
 
@@ -76,11 +60,11 @@ def reset_qdrant():
         # Delete collection if it exists
         print(f"🗑️ Deleting collection '{config.COLLECTION_NAME}'...")
         response = requests.delete(
-            f"{config.QDRANT_URL}/collections/{config.COLLECTION_NAME}")
+            f"{config.QDRANT_URL}/collections/{config.COLLECTION_NAME}"
+        )
 
         if response.status_code in (200, 404):
-            print(
-                f"✅ Collection '{config.COLLECTION_NAME}' deleted or not found")
+            print(f"✅ Collection '{config.COLLECTION_NAME}' deleted or not found")
         else:
             print(f"❌ Failed to delete collection: {response.status_code}")
             print(response.text)
@@ -111,10 +95,7 @@ def reset_elasticsearch():
         if config.ES_USERNAME and config.ES_PASSWORD:
             auth = (config.ES_USERNAME, config.ES_PASSWORD)
 
-        response = requests.delete(
-            f"{config.ES_URL}/{config.ES_INDEX}",
-            auth=auth
-        )
+        response = requests.delete(f"{config.ES_URL}/{config.ES_INDEX}", auth=auth)
 
         if response.status_code in (200, 404):
             print(f"✅ Index '{config.ES_INDEX}' deleted or not found")
@@ -132,32 +113,23 @@ def reset_elasticsearch():
                     "chunk_index": {"type": "integer"},
                     "filename": {"type": "keyword"},
                     "content_type": {"type": "keyword"},
-                    "text": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
+                    "text": {"type": "text", "analyzer": "standard"},
                     "embedding_id": {"type": "keyword"},
-                    "metadata": {"type": "object"}
+                    "metadata": {"type": "object"},
                 }
             },
-            "settings": {
-                "number_of_shards": 1,
-                "number_of_replicas": 0
-            }
+            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
         }
 
         create_response = requests.put(
-            f"{config.ES_URL}/{config.ES_INDEX}",
-            json=mapping,
-            auth=auth
+            f"{config.ES_URL}/{config.ES_INDEX}", json=mapping, auth=auth
         )
 
         if create_response.status_code in (200, 201):
             print(f"✅ New index '{config.ES_INDEX}' created")
             return True
         else:
-            print(
-                f"❌ Failed to create new index: {create_response.status_code}")
+            print(f"❌ Failed to create new index: {create_response.status_code}")
             print(create_response.text)
             return False
     except Exception as e:
@@ -173,8 +145,7 @@ def reset_minio():
         storage = StorageService()
 
         # Delete all objects
-        print(
-            f"🗑️ Deleting all objects in bucket '{config.MINIO_BUCKET_NAME}'...")
+        print(f"🗑️ Deleting all objects in bucket '{config.MINIO_BUCKET_NAME}'...")
         objects = storage.list_objects()
         if objects:
             for obj in objects:
@@ -201,8 +172,7 @@ if __name__ == "__main__":
     print("=============================================")
 
     if not args.confirm:
-        confirm = input(
-            "Are you sure you want to proceed? Type 'yes' to confirm: ")
+        confirm = input("Are you sure you want to proceed? Type 'yes' to confirm: ")
         if confirm.lower() != "yes":
             print("Operation canceled.")
             sys.exit(0)
@@ -225,7 +195,9 @@ if __name__ == "__main__":
 
     if all_ok:
         print("\n✅ All databases have been reset successfully")
-        print("\n🔄 You can now run 'python scripts/init_db.py' to verify everything works")
+        print(
+            "\n🔄 You can now run 'python scripts/init_db.py' to verify everything works"
+        )
     else:
         print("\n❌ Reset failed. Please check the errors above and try again.")
         sys.exit(1)

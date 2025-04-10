@@ -1,19 +1,20 @@
 """
 Text processing service for extraction and chunking
 """
-from typing import List, Dict, Any, Optional
-import uuid
 
-import app.config as config
-from app.utils.file_utils import extract_text_from_file
-from app.services.embedding import embed_texts, create_embeddings
+import uuid
+from typing import Any, Dict, List, Optional
+
+import app.utils.config as config
+from app.services.embedding import create_embeddings
 from app.services.vector_db import store_vectors
+from app.utils.file_utils import extract_text_from_file
 
 
 def split_text_into_chunks(
     text: str,
     chunk_size: int = config.DEFAULT_CHUNK_SIZE,
-    overlap: int = config.DEFAULT_CHUNK_OVERLAP
+    overlap: int = config.DEFAULT_CHUNK_OVERLAP,
 ) -> List[str]:
     """
     Split text into overlapping chunks
@@ -30,7 +31,7 @@ def split_text_into_chunks(
         return []
 
     # Simple splitting by paragraphs first, then recombining
-    paragraphs = text.split('\n\n')
+    paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
 
@@ -53,8 +54,9 @@ def split_text_into_chunks(
             # Keep overlap from end of previous chunk
             words = current_chunk[:chunk_size].split()
             if len(words) > overlap:
-                current_chunk = " ".join(
-                    words[-overlap:]) + "\n\n" + current_chunk[chunk_size:]
+                current_chunk = (
+                    " ".join(words[-overlap:]) + "\n\n" + current_chunk[chunk_size:]
+                )
             else:
                 current_chunk = current_chunk[chunk_size:]
 
@@ -71,7 +73,7 @@ async def process_document(
     content_type: str,
     chunk_size: int = config.DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = config.DEFAULT_CHUNK_OVERLAP,
-    base_metadata: Optional[Dict[str, Any]] = None
+    base_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Process a document: extract text, chunk it, embed chunks, and store in vector DB
@@ -90,8 +92,9 @@ async def process_document(
     try:
         # Extract text
         text = extract_text_from_file(file_content, content_type)
-        if not text:
-            raise ValueError("Could not extract text from file")
+        if not text or len(text.strip()) < 10:  # Require some minimum amount of text
+            print(f"Warning: Insufficient text extracted from file: {filename}")
+            raise ValueError("Insufficient text extracted from file")
 
         # Split into chunks
         chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
@@ -109,11 +112,11 @@ async def process_document(
             document_id = str(uuid.uuid4())
             base_metadata["file_id"] = document_id
 
-        print(
-            f"Processing document ID: {document_id} with {len(chunks)} chunks")
+        print(f"Processing document ID: {document_id} with {len(chunks)} chunks")
 
         # Create a database service instance
-        from services.database import DatabaseService
+        from app.services.database import DatabaseService
+
         db_service = DatabaseService()
 
         # Create metadata and save each chunk to database
@@ -122,11 +125,14 @@ async def process_document(
             try:
                 # Create chunk metadata
                 chunk_metadata = base_metadata.copy()
-                chunk_metadata.update({
-                    "chunk_index": i,
-                    "filename": filename,
-                    "content_type": content_type
-                })
+                chunk_metadata.update(
+                    {
+                        "chunk_index": i,
+                        "filename": filename,
+                        "content_type": content_type,
+                        "text": chunk_text,
+                    }
+                )
 
                 # First save chunk to database
                 print(f"Saving chunk {i} to database")
@@ -134,7 +140,7 @@ async def process_document(
                     document_id=document_id,
                     chunk_index=i,
                     text=chunk_text,
-                    metadata=chunk_metadata
+                    metadata=chunk_metadata,
                 )
 
                 # Generate embedding - using the proper return structure
@@ -160,6 +166,7 @@ async def process_document(
             except Exception as chunk_error:
                 print(f"Error processing chunk {i}: {str(chunk_error)}")
                 import traceback
+
                 traceback.print_exc()
                 # Continue processing other chunks
 
@@ -167,10 +174,11 @@ async def process_document(
             "filename": filename,
             "chunks": len(chunks),
             "vector_ids": vector_ids,
-            "file_id": document_id
+            "file_id": document_id,
         }
     except Exception as e:
         print(f"Error in process_document: {str(e)}")
         import traceback
+
         traceback.print_exc()
         raise

@@ -1,31 +1,43 @@
 """
 API endpoints for the Embedding API with multi-file support
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body, Query
-from typing import Optional, List
-import json
+
 import asyncio
+import json
+from typing import List, Optional
+
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 
 from app.models.schemas import (
+    ChunkSearchResult,
+    DocumentListResponse,
+    DocumentResponse,
+    MultiDocumentProcessResponse,
+    MultiDocumentUploadResponse,
+    MultiEmbeddingDocumentRequest,
     SearchRequest,
     SearchResponse,
-    ChunkSearchResult,
-    DocumentResponse,
-    DocumentListResponse,
-    MultiDocumentUploadResponse,
-    MultiDocumentProcessResponse,
-    MultiEmbeddingDocumentRequest
 )
-from app.services.embedding import embed_texts
-from app.services.vector_db import search_vectors, delete_vectors_by_filter
-from app.services.text_processor import process_document
-from app.services.storage import StorageService
-from app.services.elasticsearch import ElasticsearchService
 from app.services.database import DatabaseService
-from app.config import DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
+from app.services.elasticsearch import ElasticsearchService
+from app.services.embedding import embed_texts
+from app.services.storage import StorageService
+from app.services.text_processor import process_document
+from app.services.vector_db import delete_vectors_by_filter, search_vectors
+from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
+from app.utils.security import validate_api_key
 
 # Create API router
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(validate_api_key)])
 
 
 @router.post("/upload/batch", response_model=MultiDocumentUploadResponse)
@@ -51,7 +63,7 @@ async def upload_multiple_documents(
         print(f"ERROR: Cannot connect to MinIO: {str(minio_conn_error)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Storage service unavailable: {str(minio_conn_error)}"
+            detail=f"Storage service unavailable: {str(minio_conn_error)}",
         )
 
     # Process each file
@@ -64,22 +76,17 @@ async def upload_multiple_documents(
 
             # Upload to MinIO
             success, object_name = await storage_service.upload_file(
-                content,
-                file.filename,
-                file.content_type,
-                metadata_dict
+                content, file.filename, file.content_type, metadata_dict
             )
 
             if not success:
-                failed.append({
-                    "filename": file.filename,
-                    "error": "Upload to storage failed"
-                })
+                failed.append(
+                    {"filename": file.filename, "error": "Upload to storage failed"}
+                )
                 continue
 
             storage_path = object_name
-            print(
-                f"File successfully uploaded to MinIO with path: {storage_path}")
+            print(f"File successfully uploaded to MinIO with path: {storage_path}")
 
             # Save to database
             db_service = DatabaseService()
@@ -90,24 +97,21 @@ async def upload_multiple_documents(
                 metadata=metadata_dict,
             )
 
-            successful.append({
-                "file_id": document.id,
-                "filename": document.filename,
-                "storage_path": document.storage_path,
-                "content_type": document.content_type,
-            })
+            successful.append(
+                {
+                    "file_id": document.id,
+                    "filename": document.filename,
+                    "storage_path": document.storage_path,
+                    "content_type": document.content_type,
+                }
+            )
 
         except Exception as e:
             print(f"Error processing file {file.filename}: {str(e)}")
-            failed.append({
-                "filename": file.filename,
-                "error": str(e)
-            })
+            failed.append({"filename": file.filename, "error": str(e)})
 
     return MultiDocumentUploadResponse(
-        successful=successful,
-        failed=failed,
-        total_uploaded=len(successful)
+        successful=successful, failed=failed, total_uploaded=len(successful)
     )
 
 
@@ -132,24 +136,43 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
             document = DatabaseService.get_document(file_id)
             if not document:
                 print(f"Document not found: {file_id}")
-                return {"file_id": file_id, "status": "error", "message": "Document not found"}
+                return {
+                    "file_id": file_id,
+                    "status": "error",
+                    "message": "Document not found",
+                }
 
             # Get file content
             try:
                 file_content = storage_service.get_file_content(
-                    document["storage_path"])
+                    document["storage_path"]
+                )
                 if not file_content:
-                    print(
-                        f"File content not found: {document['storage_path']}")
-                    return {"file_id": file_id, "status": "error", "message": "File content not found"}
+                    print(f"File content not found: {document['storage_path']}")
+                    return {
+                        "file_id": file_id,
+                        "status": "error",
+                        "message": "File content not found",
+                    }
             except Exception as storage_error:
-                print(
-                    f"Storage error for file {file_id}: {str(storage_error)}")
-                return {"file_id": file_id, "status": "error", "message": f"Storage error: {str(storage_error)}"}
+                print(f"Storage error for file {file_id}: {str(storage_error)}")
+                return {
+                    "file_id": file_id,
+                    "status": "error",
+                    "message": f"Storage error: {str(storage_error)}",
+                }
 
             # Process document with provided parameters
-            chunk_size = request.chunk_size if request.chunk_size is not None else DEFAULT_CHUNK_SIZE
-            chunk_overlap = request.chunk_overlap if request.chunk_overlap is not None else DEFAULT_CHUNK_OVERLAP
+            chunk_size = (
+                request.chunk_size
+                if request.chunk_size is not None
+                else DEFAULT_CHUNK_SIZE
+            )
+            chunk_overlap = (
+                request.chunk_overlap
+                if request.chunk_overlap is not None
+                else DEFAULT_CHUNK_OVERLAP
+            )
 
             # Prepare metadata
             base_metadata = request.additional_metadata or {}
@@ -162,7 +185,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
                 content_type=document["content_type"],
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
-                base_metadata=base_metadata
+                base_metadata=base_metadata,
             )
 
             # Return success result
@@ -171,12 +194,13 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
                 "status": "success",
                 "filename": document["filename"],
                 "chunks": result["chunks"],
-                "vector_ids": result["vector_ids"]
+                "vector_ids": result["vector_ids"],
             }
 
         except Exception as e:
             print(f"Error processing file {file_id}: {str(e)}")
             import traceback
+
             traceback.print_exc()
             return {"file_id": file_id, "status": "error", "message": str(e)}
 
@@ -196,7 +220,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
         successful=successful,
         failed=failed,
         total_processed=len(successful),
-        total_chunks=total_chunks
+        total_chunks=total_chunks,
     )
 
 
@@ -215,7 +239,7 @@ async def search_endpoint(request: SearchRequest):
         search_results = search_vectors(
             query_vector=query_embedding,
             limit=request.limit,
-            filter_conditions=request.filter_metadata
+            filter_conditions=request.filter_metadata,
         )
 
         # Format results
@@ -224,21 +248,17 @@ async def search_endpoint(request: SearchRequest):
             # Extract text from metadata
             text = result["metadata"].get("text", "")
             # Remove text from metadata to avoid duplication
-            metadata = {k: v for k,
-                        v in result["metadata"].items() if k != "text"}
+            metadata = {k: v for k, v in result["metadata"].items() if k != "text"}
 
-            results.append(ChunkSearchResult(
-                id=result["id"],
-                text=text,
-                score=result["score"],
-                metadata=metadata
-            ))
+            results.append(
+                ChunkSearchResult(
+                    id=result["id"], text=text, score=result["score"], metadata=metadata
+                )
+            )
 
         return SearchResponse(results=results)
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error searching: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
 
 # router delete all documents
 @router.delete("/documents/batch")
@@ -250,21 +270,14 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
     - Elasticsearch
     - MinIO storage
     """
-    results = {
-        "successful": [],
-        "failed": [],
-        "total_deleted": 0
-    }
+    results = {"successful": [], "failed": [], "total_deleted": 0}
 
     for file_id in document_ids:
         try:
             # Get document info before deleting
             doc_info = DatabaseService.get_document(file_id)
             if not doc_info:
-                results["failed"].append({
-                    "id": file_id,
-                    "error": "Document not found"
-                })
+                results["failed"].append({"id": file_id, "error": "Document not found"})
                 continue
 
             # Get storage path
@@ -277,17 +290,12 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
             es_success = True
             try:
                 es_service = ElasticsearchService()
-                es_success = es_service.delete_by_query({
-                    "query": {
-                        "term": {
-                            "file_id": file_id
-                        }
-                    }
-                })
+                es_success = es_service.delete_by_query(
+                    {"query": {"term": {"file_id": file_id}}}
+                )
             except Exception as e:
                 es_success = False
-                print(
-                    f"Error deleting document {file_id} from Elasticsearch: {e}")
+                print(f"Error deleting document {file_id} from Elasticsearch: {e}")
 
             # Delete from MinIO if storage path exists
             minio_success = True
@@ -304,10 +312,9 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
 
             # Check if all operations were successful
             if vector_success and db_success and es_success and minio_success:
-                results["successful"].append({
-                    "id": file_id,
-                    "message": "Successfully deleted"
-                })
+                results["successful"].append(
+                    {"id": file_id, "message": "Successfully deleted"}
+                )
                 results["total_deleted"] += 1
             else:
                 # Report partial success
@@ -321,16 +328,15 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
                 if not minio_success:
                     failures.append("storage")
 
-                results["failed"].append({
-                    "id": file_id,
-                    "error": f"Partially deleted. Failed in: {', '.join(failures)}"
-                })
+                results["failed"].append(
+                    {
+                        "id": file_id,
+                        "error": f"Partially deleted. Failed in: {', '.join(failures)}",
+                    }
+                )
 
         except Exception as e:
-            results["failed"].append({
-                "id": file_id,
-                "error": str(e)
-            })
+            results["failed"].append({"id": file_id, "error": str(e)})
 
     return results
 
@@ -346,14 +352,12 @@ async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge
         total = DatabaseService.count_documents()
 
         return DocumentListResponse(
-            documents=documents,
-            total=total,
-            limit=limit,
-            offset=offset
+            documents=documents, total=total, limit=limit, offset=offset
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Error retrieving documents: {str(e)}")
+            status_code=500, detail=f"Error retrieving documents: {str(e)}"
+        )
 
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
@@ -371,4 +375,5 @@ async def get_document(document_id: str):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Error retrieving document: {str(e)}")
+            status_code=500, detail=f"Error retrieving document: {str(e)}"
+        )
