@@ -1,7 +1,10 @@
+docx
 elasticsearch
 fastapi
 huggingface_hub
 minio
+opencv-python
+paddleocr
 pdf2image
 pillow
 psycopg2-binary
@@ -13,5 +16,6 @@ python-multipart
 qdrant-client
 sentence-transformers
 SQLAlchemy
+torch
 transformers
 uvicorn[standard]
