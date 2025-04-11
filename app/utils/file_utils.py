@@ -1,10 +1,10 @@
 """
-File handling utilities for working with different file formats
-Balanced optimization for speed and image-based PDF detection
+Enhanced file handling utilities with adaptive OCR for PDFs with mixed content
 """
 
 import io
-import os
+import re
+from typing import List
 
 import docx
 import PyPDF2
@@ -15,237 +15,228 @@ from PIL import Image, ImageEnhance
 
 def extract_text_from_pdf(file_content: bytes) -> str:
     """
-    Extract text from PDF file with balanced approach.
-    Optimized to detect image-based PDFs while maintaining reasonable speed.
-
-    Args:
-        file_content: Binary file content
-
-    Returns:
-        Extracted text
+    Extract text from PDF with adaptive OCR for mixed content
     """
     try:
+        # First pass: analyze document to set adaptive threshold
         with io.BytesIO(file_content) as file:
             reader = PyPDF2.PdfReader(file)
-            total_pages = len(reader.pages)
+            page_texts = []
+            total_text_length = 0
 
-            # Quick check for image-based PDF - examine resources in first page
-            is_likely_image_based = False
-            if total_pages > 0:
-                first_page = reader.pages[0]
-                # Check for XObject or image resources that often indicate image-based content
-                if "/XObject" in first_page or "/Image" in str(first_page):
-                    is_likely_image_based = True
-                    print("PDF appears to be image-based based on resources")
-
-            # If likely image-based, go straight to OCR for first page
-            if is_likely_image_based:
-                print("Using OCR for likely image-based PDF...")
-                # Try just first page first as a sample
-                sample_text = extract_text_with_ocr(file_content, page_indices=[0])
-                if (
-                    len(sample_text.strip()) > 20
-                ):  # If we got meaningful text from sample
-                    # OCR the rest of the document
-                    if total_pages > 1:
-                        return sample_text + extract_text_with_ocr(
-                            file_content, page_indices=list(range(1, total_pages))
-                        )
-                    return sample_text
-
-            # If not clearly image-based, try standard approach
-            # Try direct extraction first
-            direct_text = ""
-            empty_pages = []
-
-            for page_num, page in enumerate(reader.pages):
+            # Gather statistics about each page
+            for page in reader.pages:
                 page_text = page.extract_text() or ""
-                if page_text.strip():
-                    direct_text += f"{page_text}\n\n"
-                else:
-                    empty_pages.append(page_num)
+                page_texts.append(page_text)
+                total_text_length += len(page_text.strip())
 
-            # If we got substantial direct text, return it
-            if len(direct_text.strip()) >= 50:
-                return direct_text
+            # Calculate adaptive threshold based on document characteristics
+            avg_text_per_page = total_text_length / max(len(page_texts), 1)
+            adaptive_threshold = min(1500, max(500, avg_text_per_page * 0.5))
+            print(f"Adaptive threshold: {adaptive_threshold:.1f} chars")
 
-            # If most/all pages are empty, this is probably an image-based PDF
-            if len(empty_pages) > 0:
-                # Run OCR on empty pages
-                print(
-                    f"Running OCR on {len(empty_pages)} pages without extracted text..."
-                )
-                ocr_text = extract_text_with_ocr(file_content, page_indices=empty_pages)
-                full_text = direct_text + ocr_text
+            # Process each page with the adaptive threshold
+            all_text = ""
+            for page_num, page_text in enumerate(page_texts):
+                # If page has limited text or suspicious patterns, apply OCR
+                if len(page_text.strip()) < adaptive_threshold:
+                    print(f"Page {page_num+1}: Applying OCR")
+                    ocr_text = extract_images_and_ocr(file_content, page_num)
 
-                if len(full_text.strip()) < 10:
-                    # If still not enough text, try one more approach with different settings
-                    print("Trying higher quality OCR as final attempt...")
-                    return extract_text_with_better_ocr(file_content)
-
-                return full_text
-
-            # Fallback if we get here
-            return direct_text or "No text could be extracted from PDF"
-
-    except Exception as e:
-        print(f"Error during PDF text extraction: {e}")
-        # Try OCR as last resort
-        try:
-            return extract_text_with_better_ocr(file_content)
-        except Exception as ocr_error:
-            print(f"OCR also failed: {ocr_error}")
-            raise ValueError(f"Could not extract text from PDF: {str(e)}")
-
-
-def extract_text_with_ocr(pdf_content: bytes, page_indices=None) -> str:
-    """
-    Standard OCR for PDF images - balanced speed and accuracy.
-
-    Args:
-        pdf_content: Binary PDF content
-        page_indices: Optional list of page indices to process (0-based)
-
-    Returns:
-        Extracted text from images
-    """
-    try:
-        # Convert PDF to images
-        images = convert_from_bytes(
-            pdf_content,
-            dpi=300,  # Higher DPI for better quality on image PDFs
-            fmt="jpeg",
-            poppler_path=get_poppler_path(),
-        )
-
-        # Process only specific pages if requested
-        if page_indices is not None and page_indices:
-            if len(images) > 0 and max(page_indices) < len(images):
-                images = [images[i] for i in page_indices]
-            else:
-                # Adjust for out of range indices
-                valid_indices = [i for i in page_indices if i < len(images)]
-                images = [images[i] for i in valid_indices]
-
-        # Standard OCR config - tesseract 4+ preferred
-        custom_config = r"--oem 3 --psm 6"  # More accurate for text in images
-
-        # Process images
-        text = ""
-        for i, img in enumerate(images):
-            try:
-                # Convert to grayscale
-                gray_img = img.convert("L")
-
-                # Enhance contrast for better OCR
-                enhancer = ImageEnhance.Contrast(gray_img)
-                enhanced_img = enhancer.enhance(2.0)  # Stronger contrast for image PDFs
-
-                # Extract text
-                page_text = pytesseract.image_to_string(
-                    enhanced_img, config=custom_config
-                )
-
-                if page_text.strip():
-                    # Only add page number for multiple pages
-                    if len(images) > 1:
-                        page_num = page_indices[i] + 1 if page_indices else i + 1
-                        text += f"[Page {page_num}]\n{page_text}\n\n"
+                    if ocr_text and page_text.strip():
+                        # Combine both texts
+                        all_text += merge_texts(page_text, ocr_text) + "\n\n"
+                    elif ocr_text:
+                        all_text += ocr_text + "\n\n"
                     else:
-                        text += f"{page_text}\n\n"
+                        all_text += page_text + "\n\n"
+                else:
+                    all_text += page_text + "\n\n"
 
-            except Exception as page_error:
-                print(f"Error on page {i}: {page_error}")
-                continue
-
-        return text
+        return all_text.strip()
     except Exception as e:
-        print(f"OCR processing error: {e}")
-        raise
+        print(f"Error extracting text from PDF: {e}")
+        # Fallback to full OCR
+        try:
+            return extract_text_with_ocr(file_content)
+        except Exception:
+            return ""
 
 
-def extract_text_with_better_ocr(pdf_content: bytes) -> str:
+def extract_images_and_ocr(pdf_content: bytes, page_number: int) -> str:
     """
-    Higher quality OCR for difficult images.
-
-    Args:
-        pdf_content: Binary PDF content
-
-    Returns:
-        Extracted text from images
+    Extract images from a PDF page and perform OCR
     """
     try:
-        # Use higher DPI
-        images = convert_from_bytes(pdf_content, dpi=400, fmt="jpeg")  # Higher quality
+        # Convert page to high-resolution image
+        images = convert_from_bytes(
+            pdf_content, first_page=page_number + 1, last_page=page_number + 1, dpi=300
+        )
 
         if not images:
             return ""
 
-        # Try multiple OCR approaches (LSTM and Legacy)
-        text = ""
-        for i, img in enumerate(images):
-            try:
-                # Convert to RGB and then to grayscale
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                gray = img.convert("L")
+        # Enhance image for better OCR
+        img = images[0].convert("L")  # Convert to grayscale
+        enhancer = ImageEnhance.Contrast(img)
+        enhanced_img = enhancer.enhance(1.5)  # Increase contrast
 
-                # Enhance contrast more aggressively
-                enhancer = ImageEnhance.Contrast(gray)
-                enhanced = enhancer.enhance(2.5)
+        # Try different OCR configurations
+        ocr_text1 = pytesseract.image_to_string(
+            enhanced_img, config="--psm 1 --oem 3"  # Auto page segmentation
+        )
 
-                # Try both OCR engines and take the better result
-                lstm_text = pytesseract.image_to_string(
-                    enhanced, config="--oem 1 --psm 6"
-                )
-                neural_text = pytesseract.image_to_string(
-                    enhanced, config="--oem 3 --psm 6"
-                )
+        ocr_text2 = pytesseract.image_to_string(
+            enhanced_img, config="--psm 6 --oem 3"  # Assume single block of text
+        )
 
-                # Use the longer result
-                page_text = (
-                    lstm_text if len(lstm_text) > len(neural_text) else neural_text
-                )
+        # Use the better result (usually the longer one)
+        if len(ocr_text1) > len(ocr_text2) * 1.2:
+            return ocr_text1
+        elif len(ocr_text2) > len(ocr_text1) * 1.2:
+            return ocr_text2
+        else:
+            # Combine results
+            return merge_texts(ocr_text1, ocr_text2)
 
-                if len(images) > 1:
-                    text += f"[Page {i+1}]\n{page_text}\n\n"
-                else:
-                    text += f"{page_text}\n\n"
-
-            except Exception as page_error:
-                print(f"Error processing page {i} with better OCR: {page_error}")
-
-        return text
     except Exception as e:
-        print(f"Enhanced OCR processing error: {e}")
+        print(f"OCR error on page {page_number+1}: {e}")
         return ""
 
 
-def get_poppler_path():
+def merge_texts(text1: str, text2: str) -> str:
     """
-    Get poppler path based on environment.
-    Override this with your specific path if needed.
+    Merge two text sources intelligently
     """
-    # Common locations - adjust as needed for your environment
-    if os.name == "nt":  # Windows
-        return None  # Set your Windows path if needed
-    elif os.name == "posix":  # Linux/Mac
-        for path in ["/usr/local/bin", "/usr/bin", "/opt/homebrew/bin"]:
-            if os.path.exists(os.path.join(path, "pdftoppm")):
-                return path
-    return None
+    # If one is empty, return the other
+    if not text1.strip():
+        return text2
+    if not text2.strip():
+        return text1
+
+    # Split into paragraphs
+    paras1 = [p.strip() for p in text1.split("\n") if p.strip()]
+    paras2 = [p.strip() for p in text2.split("\n") if p.strip()]
+
+    # Create merged result
+    result = []
+
+    # Add text1 paragraphs
+    for para in paras1:
+        result.append(para)
+
+    # Add unique text2 paragraphs
+    for para in paras2:
+        # Skip garbage OCR text
+        if is_likely_garbage(para):
+            continue
+
+        # Check if similar paragraph already exists
+        if not any(is_similar(para, existing) for existing in result):
+            result.append(para)
+
+    return "\n\n".join(result)
+
+
+def is_similar(text1: str, text2: str, threshold: float = 0.6) -> bool:
+    """
+    Check if two text snippets are similar
+    """
+    # Normalize texts
+    t1 = re.sub(r"[^\w\s]", "", text1.lower())
+    t2 = re.sub(r"[^\w\s]", "", text2.lower())
+
+    # Get words
+    words1 = set(t1.split())
+    words2 = set(t2.split())
+
+    # Calculate similarity
+    if not words1 or not words2:
+        return False
+
+    intersection = len(words1.intersection(words2))
+    union = len(words1.union(words2))
+
+    return intersection / union >= threshold
+
+
+def is_likely_garbage(text: str) -> bool:
+    """
+    Check if text is likely OCR garbage
+    """
+    # Skip empty text
+    if not text or not text.strip():
+        return True
+
+    # Check for lack of spaces
+    if len(text) > 10 and " " not in text:
+        return True
+
+    # Check for too many special characters
+    special_char_ratio = sum(
+        1 for c in text if not c.isalnum() and not c.isspace()
+    ) / max(len(text), 1)
+    if special_char_ratio > 0.3:
+        return True
+
+    # Check for suspiciously long words
+    words = text.split()
+    if any(len(word) > 25 for word in words):
+        return True
+
+    return False
+
+
+def extract_text_with_ocr(pdf_content: bytes) -> str:
+    """
+    Full OCR fallback for entire PDF
+    """
+    try:
+        # Convert PDF to images
+        images = convert_from_bytes(pdf_content, dpi=300)
+
+        # Perform OCR on each image
+        text = ""
+        for img in images:
+            # Convert to grayscale
+            img = img.convert("L")
+
+            # Enhance contrast
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.5)
+
+            # Perform OCR
+            page_text = pytesseract.image_to_string(img, config="--psm 1 --oem 3")
+            text += page_text + "\n\n"
+
+        return text
+    except Exception as e:
+        print(f"Error during OCR processing: {e}")
+        return ""
+
+
+def extract_text_from_file(file_content: bytes, content_type: str) -> str:
+    """
+    Extract text based on file type
+    """
+    if "pdf" in content_type:
+        return extract_text_from_pdf(file_content)
+    elif (
+        "docx" in content_type
+        or "openxmlformats-officedocument.wordprocessingml.document" in content_type
+    ):
+        return extract_text_from_docx(file_content)
+    elif "text/" in content_type:
+        return file_content.decode("utf-8", errors="replace")
+    elif "image/" in content_type:
+        return extract_text_from_image(file_content)
+    else:
+        print(f"Unsupported content type: {content_type}")
+        return ""
 
 
 def extract_text_from_docx(file_content: bytes) -> str:
-    """
-    Extract text from DOCX file
-
-    Args:
-        file_content: Binary file content
-
-    Returns:
-        Extracted text
-    """
+    """Extract text from DOCX file"""
     try:
         with io.BytesIO(file_content) as file:
             doc = docx.Document(file)
@@ -256,90 +247,19 @@ def extract_text_from_docx(file_content: bytes) -> str:
 
 
 def extract_text_from_image(image_content: bytes) -> str:
-    """
-    Extract text from image using OCR
-
-    Args:
-        image_content: Binary image content
-
-    Returns:
-        Extracted text
-    """
+    """Extract text from image using OCR"""
     try:
         with io.BytesIO(image_content) as file:
             img = Image.open(file)
-
-            # Convert to grayscale
-            img = img.convert("L")
+            img = img.convert("L")  # Convert to grayscale
 
             # Enhance contrast
             enhancer = ImageEnhance.Contrast(img)
-            img = enhancer.enhance(2.0)
+            img = enhancer.enhance(1.5)
 
-            # OCR config
-            custom_config = r"--oem 3 --psm 6"  # More accurate for images
-            text = pytesseract.image_to_string(img, config=custom_config)
+            # Apply OCR
+            text = pytesseract.image_to_string(img, config="--psm 3 --oem 3")
             return text
     except Exception as e:
         print(f"Error extracting text from image: {e}")
         return ""
-
-
-def extract_text_from_file(file_content: bytes, content_type: str) -> str:
-    """
-    Extract text based on file type
-
-    Args:
-        file_content: Binary file content
-        content_type: MIME content type
-
-    Returns:
-        Extracted text
-    """
-    try:
-        print(f"Processing file with content type: {content_type}")
-
-        if "pdf" in content_type:
-            text = extract_text_from_pdf(file_content)
-
-            # PDF is special case - even minimal text is useful
-            if not text or len(text.strip()) < 5:
-                print(f"Warning: Insufficient text extracted from PDF")
-
-                # One more attempt with higher quality OCR
-                try:
-                    text = extract_text_with_better_ocr(file_content)
-                    if text.strip():
-                        return text
-                except:
-                    pass
-
-                raise ValueError("Could not extract meaningful text from file")
-
-            return text
-
-        elif (
-            "docx" in content_type
-            or "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            in content_type
-        ):
-            text = extract_text_from_docx(file_content)
-            if not text or len(text.strip()) < 5:
-                raise ValueError("Insufficient text extracted from DOCX file")
-            return text
-
-        elif "text/" in content_type:
-            return file_content.decode("utf-8", errors="replace")
-
-        elif "image/" in content_type:
-            text = extract_text_from_image(file_content)
-            if not text or len(text.strip()) < 5:
-                raise ValueError("No text detected in image")
-            return text
-
-        else:
-            raise ValueError(f"Unsupported content type: {content_type}")
-
-    except Exception as e:
-        print(f"Error in extract_text_from_file: {str(e)}")
-        raise
