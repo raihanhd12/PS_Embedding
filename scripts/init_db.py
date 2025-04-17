@@ -193,7 +193,7 @@ def initialize_minio():
     print("\n🔄 Initializing MinIO storage...")
     try:
         # Initialize MinIO service
-        storage_service = StorageService()
+        StorageService()
         print(f"✅ MinIO bucket '{config.MINIO_BUCKET_NAME}' initialized")
         return True
     except Exception as e:
@@ -208,7 +208,7 @@ def verify_all_services():
 
     # Check PostgreSQL
     try:
-        result = DatabaseService.get_documents(limit=1)
+        DatabaseService.get_documents(limit=1)
         print("✅ PostgreSQL database is operational")
     except Exception as e:
         print(f"❌ PostgreSQL check failed: {e}")

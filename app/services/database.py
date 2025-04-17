@@ -298,6 +298,37 @@ class DatabaseService:
             return False
 
     @staticmethod
+    def update_document_metadata(document_id: str, metadata: Dict[str, Any]) -> bool:
+        """
+        Update document metadata
+
+        Args:
+            document_id: Document ID
+            metadata: Updated metadata dictionary
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            with SessionLocal() as session:
+                document = (
+                    session.query(Document).filter(Document.id == document_id).first()
+                )
+                if not document:
+                    return False
+
+                # Update metadata - preserve existing data and add/overwrite new fields
+                current_metadata = document.doc_metadata or {}
+                updated_metadata = {**current_metadata, **metadata}
+                document.doc_metadata = updated_metadata
+
+                session.commit()
+                return True
+        except Exception as e:
+            print(f"Error updating document metadata: {e}")
+            return False
+
+    @staticmethod
     def update_chunk_embedding(chunk_id: str, embedding_id: str) -> bool:
         """
         Update chunk with embedding ID

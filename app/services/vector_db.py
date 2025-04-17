@@ -113,6 +113,14 @@ def search_vectors(
                         )
                     )
 
+            # Only show active documents by default unless explicitly overridden
+            if "active" not in filter_conditions:
+                filter_conditions_list.append(
+                    models.FieldCondition(
+                        key="active", match=models.MatchValue(value=True)
+                    )
+                )
+
             # Create the final filter with all conditions
             filter_query = models.Filter(must=filter_conditions_list)
 
@@ -186,4 +194,70 @@ def delete_vectors_by_filter(filter_conditions: Dict[str, Any]) -> bool:
         return True
     except Exception as e:
         print(f"Error deleting vectors: {e}")
+        return False
+
+
+def update_vectors_metadata(
+    filter_conditions: Dict[str, Any], metadata_update: Dict[str, Any]
+) -> bool:
+    """
+    Update metadata for vectors matching filter conditions
+
+    Args:
+        filter_conditions: Filter to match vectors
+        metadata_update: Metadata fields to update
+
+    Returns:
+        bool: True if successful
+    """
+    try:
+        # Build filter
+        filter_query = models.Filter(
+            must=[
+                models.FieldCondition(key=key, match=models.MatchValue(value=value))
+                for key, value in filter_conditions.items()
+            ]
+        )
+
+        # Get points matching the filter
+        search_results = client.scroll(
+            collection_name=config.COLLECTION_NAME,
+            scroll_filter=filter_query,
+            limit=100,  # Process in batches of 100
+        )
+
+        # Extract point IDs
+        point_ids = []
+        for batch in search_results:
+            point_ids.extend([str(point.id) for point in batch])
+
+        if not point_ids:
+            # No points match the filter
+            return True
+
+        # Retrieve points to get their full payload
+        points = client.retrieve(
+            collection_name=config.COLLECTION_NAME,
+            ids=point_ids,
+        )
+
+        # Update payloads
+        for point in points:
+            point_id = str(point.id)
+            payload = point.payload.copy() if point.payload else {}
+
+            # Update payload with new metadata
+            for key, value in metadata_update.items():
+                payload[key] = value
+
+            # Update the point
+            client.set_payload(
+                collection_name=config.COLLECTION_NAME,
+                payload=payload,
+                points=[point_id],
+            )
+
+        return True
+    except Exception as e:
+        print(f"Error updating vector metadata: {e}")
         return False

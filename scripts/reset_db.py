@@ -12,7 +12,7 @@ sys.path.insert(0, str(parent_dir))
 # Import configuration and services
 try:
     import app.utils.config as config
-    from app.services.database import Base, DatabaseService, engine
+    from app.services.database import Base, engine
     from app.services.storage import StorageService
     from app.services.vector_db import init_vector_db
 except ImportError as e:
@@ -77,7 +77,7 @@ def reset_qdrant():
             print(f"✅ Collection '{config.COLLECTION_NAME}' recreated")
             return True
         else:
-            print(f"❌ Failed to recreate collection")
+            print("❌ Failed to recreate collection")
             return False
     except Exception as e:
         print(f"❌ Error resetting Qdrant: {e}")

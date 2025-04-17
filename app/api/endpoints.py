@@ -4,6 +4,8 @@ API endpoints for the Embedding API with multi-file support
 
 import asyncio
 import json
+import os
+import uuid
 from typing import List, Optional
 
 from fastapi import (
@@ -32,7 +34,11 @@ from app.services.elasticsearch import ElasticsearchService
 from app.services.embedding import embed_texts
 from app.services.storage import StorageService
 from app.services.text_processor import process_document
-from app.services.vector_db import delete_vectors_by_filter, search_vectors
+from app.services.vector_db import (
+    delete_vectors_by_filter,
+    search_vectors,
+    update_vectors_metadata,
+)
 from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.utils.security import validate_api_key
 
@@ -112,6 +118,139 @@ async def upload_multiple_documents(
 
     return MultiDocumentUploadResponse(
         successful=successful, failed=failed, total_uploaded=len(successful)
+    )
+
+
+@router.post("/embedding/local", response_model=MultiDocumentProcessResponse)
+async def local_file_embedding(
+    file_paths: List[str] = Body(..., description="List of local file paths"),
+    chunk_size: Optional[int] = Body(
+        DEFAULT_CHUNK_SIZE, description="Chunk size for text splitting"
+    ),
+    chunk_overlap: Optional[int] = Body(
+        DEFAULT_CHUNK_OVERLAP, description="Chunk overlap for text splitting"
+    ),
+    additional_metadata: Optional[dict] = Body(
+        None, description="Additional metadata for all files"
+    ),
+    _: str = Depends(validate_api_key),
+):
+    successful = []
+    failed = []
+    total_chunks = 0
+
+    async def process_single_local_file(file_path):
+        """Process a single local file for embedding"""
+        try:
+            # Check if file exists
+            if not os.path.exists(file_path):
+                return {
+                    "file_path": file_path,
+                    "status": "error",
+                    "message": "File not found on server",
+                }
+
+            # Get file metadata
+            filename = os.path.basename(file_path)
+            _, file_extension = os.path.splitext(filename)
+
+            # Determine content type based on extension
+            content_type_map = {
+                ".pdf": "application/pdf",
+                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".doc": "application/msword",
+                ".txt": "text/plain",
+                ".md": "text/markdown",
+                ".html": "text/html",
+                ".htm": "text/html",
+                ".csv": "text/csv",
+                ".json": "application/json",
+            }
+
+            content_type = content_type_map.get(
+                file_extension.lower(), "application/octet-stream"
+            )
+
+            # Read file content
+            try:
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+            except Exception as file_error:
+                return {
+                    "file_path": file_path,
+                    "status": "error",
+                    "message": f"Error reading file: {str(file_error)}",
+                }
+
+            # Generate a document ID (without storing in database)
+            document_id = str(uuid.uuid4())
+
+            # Prepare metadata
+            base_metadata = additional_metadata or {}
+            base_metadata["file_id"] = document_id
+            base_metadata["file_path"] = file_path  # Store original path
+            base_metadata["local_file"] = True  # Flag to indicate this is a local file
+
+            # Process the document directly
+            result = await process_document(
+                file_content=file_content,
+                filename=filename,
+                content_type=content_type,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                base_metadata=base_metadata,
+            )
+
+            # Optionally create a document record to track this in the database
+            # This is optional since we're not using MinIO, but helps with tracking
+            try:
+                db_service = DatabaseService()
+                document = db_service.create_document(
+                    filename=filename,
+                    content_type=content_type,
+                    storage_path=None,  # No MinIO storage path
+                    metadata={"local_path": file_path, **base_metadata},
+                )
+                document_id = document.id
+            except Exception as db_error:
+                print(f"Warning: Could not create document record: {str(db_error)}")
+                # Continue even if document record creation fails
+
+            # Return success result
+            return {
+                "file_id": document_id,
+                "file_path": file_path,
+                "status": "success",
+                "filename": filename,
+                "chunks": result["chunks"],
+                "vector_ids": result["vector_ids"],
+            }
+
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return {"file_path": file_path, "status": "error", "message": str(e)}
+
+    # Process all local files concurrently
+    import asyncio
+
+    tasks = [process_single_local_file(file_path) for file_path in file_paths]
+    results = await asyncio.gather(*tasks)
+
+    # Organize results
+    for result in results:
+        if result.get("status") == "success":
+            successful.append(result)
+            total_chunks += result.get("chunks", 0)
+        else:
+            failed.append(result)
+
+    return MultiDocumentProcessResponse(
+        successful=successful,
+        failed=failed,
+        total_processed=len(successful),
+        total_chunks=total_chunks,
     )
 
 
@@ -222,7 +361,6 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
         total_processed=len(successful),
         total_chunks=total_chunks,
     )
-
 
 @router.post("/search", response_model=SearchResponse)
 async def search_endpoint(request: SearchRequest):
@@ -340,6 +478,147 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
 
     return results
 
+@router.delete("/documents/local/batch")
+async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)):
+    """
+    Delete multiple local document embeddings:
+    - PostgreSQL database
+    - Vector database (Qdrant)
+    - Elasticsearch
+    """
+    results = {"successful": [], "failed": [], "total_deleted": 0}
+
+    for file_id in document_ids:
+        try:
+            # Get document info before deleting
+            doc_info = DatabaseService.get_document(file_id)
+            if not doc_info:
+                results["failed"].append({"id": file_id, "error": "Document not found"})
+                continue
+
+            # Check if it's a local document
+            metadata = doc_info.get("metadata", {})
+            if not metadata.get("local_file", False):
+                results["failed"].append(
+                    {
+                        "id": file_id,
+                        "error": "Not a local document. Use regular delete endpoint.",
+                    }
+                )
+                continue
+
+            # Delete vectors from Qdrant
+            vector_success = delete_vectors_by_filter({"file_id": file_id})
+
+            # Delete from Elasticsearch if available
+            es_success = True
+            try:
+                es_service = ElasticsearchService()
+                es_success = es_service.delete_by_query(
+                    {"query": {"term": {"file_id": file_id}}}
+                )
+            except Exception as e:
+                es_success = False
+                print(f"Error deleting document {file_id} from Elasticsearch: {e}")
+
+            # Delete from PostgreSQL
+            db_success = DatabaseService.delete_document(file_id)
+
+            # Check if all operations were successful
+            if vector_success and db_success and es_success:
+                results["successful"].append(
+                    {"id": file_id, "message": "Successfully deleted"}
+                )
+                results["total_deleted"] += 1
+            else:
+                # Report partial success
+                failures = []
+                if not vector_success:
+                    failures.append("vector database")
+                if not db_success:
+                    failures.append("database")
+                if not es_success:
+                    failures.append("Elasticsearch")
+
+                results["failed"].append(
+                    {
+                        "id": file_id,
+                        "error": f"Partially deleted. Failed in: {', '.join(failures)}",
+                    }
+                )
+
+        except Exception as e:
+            results["failed"].append({"id": file_id, "error": str(e)})
+
+    return results
+
+@router.post("/documents/{document_id}/toggle-status")
+async def toggle_document_status(
+    document_id: str,
+    active: bool = Body(...),
+):
+    """
+    Enable or disable a document from appearing in search results
+    without deleting it from the system.
+    """
+    try:
+        # Get document info
+        document = DatabaseService.get_document(document_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Update in PostgreSQL
+        metadata = document.get("metadata", {}) or {}
+        metadata["active"] = active
+        db_success = DatabaseService.update_document_metadata(document_id, metadata)
+
+        # Update in vector DB
+        vector_success = (
+            delete_vectors_by_filter if not active else update_vectors_metadata
+        )
+        vector_operation = vector_success({"file_id": document_id}, {"active": active})
+
+        # Update in Elasticsearch if used
+        es_success = True
+        try:
+            es_service = ElasticsearchService()
+            es_update_query = {
+                "script": {
+                    "source": "ctx._source.metadata.active = params.active",
+                    "params": {"active": active},
+                },
+                "query": {"term": {"file_id": document_id}},
+            }
+            es_success = (
+                es_service.delete_by_query(es_update_query) if not active else True
+            )
+        except Exception as e:
+            es_success = False
+            print(f"Error updating document {document_id} in Elasticsearch: {e}")
+
+        # Check success
+        if vector_operation and db_success and es_success:
+            status = "enabled" if active else "disabled"
+            return {"success": True, "message": f"Document {status} successfully"}
+        else:
+            # Report partial success
+            failures = []
+            if not vector_operation:
+                failures.append("vector database")
+            if not db_success:
+                failures.append("database")
+            if not es_success:
+                failures.append("Elasticsearch")
+
+            return {
+                "success": False,
+                "error": f"Partial update. Failed in: {', '.join(failures)}",
+            }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error updating document: {str(e)}"
+        )
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge=0)):
@@ -358,7 +637,6 @@ async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge
         raise HTTPException(
             status_code=500, detail=f"Error retrieving documents: {str(e)}"
         )
-
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 async def get_document(document_id: str):
