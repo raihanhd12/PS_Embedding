@@ -23,7 +23,9 @@ def init_vector_db() -> bool:
     try:
         # Use a fixed vector size instead of importing the embedding model
         # which may not be available due to huggingface_hub issues
-        vector_size = 384  # Common size for sentence-transformers/all-MiniLM-L6-v2
+        vector_size = (
+            config.VECTOR_SIZE
+        )  # Common size for sentence-transformers/all-MiniLM-L6-v2
 
         collections = client.get_collections().collections
         if config.COLLECTION_NAME not in [c.name for c in collections]:
@@ -76,73 +78,51 @@ def search_vectors(
     filter_conditions: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Search for similar vectors
+    Search vectors in Qdrant with filter conditions
 
     Args:
         query_vector: Query embedding vector
         limit: Maximum number of results
-        filter_conditions: Optional filter conditions that can include multiple values
+        filter_conditions: Optional filter conditions (e.g., {'active': True})
 
     Returns:
-        List of search results
+        List of search results with id, score, and metadata
     """
     try:
-        # Build filter if provided
-        filter_query = None
+        print(f"search_vectors filter_conditions: {filter_conditions}")
+
+        qdrant_filter = None
         if filter_conditions:
-            filter_conditions_list = []
-            for key, value in filter_conditions.items():
-                # Handle multiple values for a single field
-                if isinstance(value, list):
-                    # For arrays, create a should clause (logical OR)
-                    should_conditions = []
-                    for val in value:
-                        should_conditions.append(
-                            models.FieldCondition(
-                                key=key, match=models.MatchValue(value=val)
-                            )
-                        )
-                    filter_conditions_list.append(
-                        models.Filter(should=should_conditions)
-                    )
-                else:
-                    # For single values, create a regular must clause
-                    filter_conditions_list.append(
-                        models.FieldCondition(
-                            key=key, match=models.MatchValue(value=value)
-                        )
-                    )
-
-            # Only show active documents by default unless explicitly overridden
-            if "active" not in filter_conditions:
-                filter_conditions_list.append(
+            qdrant_filter = models.Filter(
+                must=[
                     models.FieldCondition(
-                        key="active", match=models.MatchValue(value=True)
+                        key=f"metadata.{key}", match=models.MatchValue(value=value)
                     )
-                )
+                    for key, value in filter_conditions.items()
+                ]
+            )
+            print(f"Qdrant filter applied: {qdrant_filter}")
 
-            # Create the final filter with all conditions
-            filter_query = models.Filter(must=filter_conditions_list)
-
-        # Search in Qdrant
-        search_results = client.search(
+        results = client.search(
             collection_name=config.COLLECTION_NAME,
             query_vector=query_vector,
+            query_filter=qdrant_filter,
             limit=limit,
-            query_filter=filter_query,
         )
 
-        # Format results
-        return [
-            {
-                "id": str(result.id),
-                "score": float(result.score),
-                "metadata": result.payload,
-            }
-            for result in search_results
+        formatted_results = [
+            {"id": str(hit.id), "score": hit.score, "metadata": hit.payload or {}}
+            for hit in results
         ]
+        print(f"search_vectors results: {len(formatted_results)} items")
+        for result in formatted_results:
+            print(
+                f"Result: id={result['id']}, file_id={result['metadata'].get('file_id')}, active={result['metadata'].get('active')}"
+            )
+
+        return formatted_results
     except Exception as e:
-        print(f"Error searching vectors: {e}")
+        print(f"Error in search_vectors: {str(e)}")
         return []
 
 
@@ -181,7 +161,9 @@ def delete_vectors_by_filter(filter_conditions: Dict[str, Any]) -> bool:
         # Build filter
         filter_query = models.Filter(
             must=[
-                models.FieldCondition(key=key, match=models.MatchValue(value=value))
+                models.FieldCondition(
+                    key=f"metadata.{key}", match=models.MatchValue(value=value)
+                )
                 for key, value in filter_conditions.items()
             ]
         )
@@ -212,51 +194,23 @@ def update_vectors_metadata(
     """
     try:
         # Build filter
-        filter_query = models.Filter(
-            must=[
-                models.FieldCondition(key=key, match=models.MatchValue(value=value))
-                for key, value in filter_conditions.items()
-            ]
-        )
-
-        # Get points matching the filter
-        search_results = client.scroll(
-            collection_name=config.COLLECTION_NAME,
-            scroll_filter=filter_query,
-            limit=100,  # Process in batches of 100
-        )
-
-        # Extract point IDs
-        point_ids = []
-        for batch in search_results:
-            point_ids.extend([str(point.id) for point in batch])
-
-        if not point_ids:
-            # No points match the filter
-            return True
-
-        # Retrieve points to get their full payload
-        points = client.retrieve(
-            collection_name=config.COLLECTION_NAME,
-            ids=point_ids,
-        )
-
-        # Update payloads
-        for point in points:
-            point_id = str(point.id)
-            payload = point.payload.copy() if point.payload else {}
-
-            # Update payload with new metadata
-            for key, value in metadata_update.items():
-                payload[key] = value
-
-            # Update the point
-            client.set_payload(
-                collection_name=config.COLLECTION_NAME,
-                payload=payload,
-                points=[point_id],
+        must_conditions = [
+            models.FieldCondition(
+                key=f"metadata.{key}", match=models.MatchValue(value=value)
             )
+            for key, value in filter_conditions.items()
+        ]
+        filter_query = models.Filter(must=must_conditions)
 
+        # Use set_payload with a FilterSelector
+        client.set_payload(
+            collection_name=config.COLLECTION_NAME,
+            payload=metadata_update,
+            points=models.FilterSelector(filter=filter_query),
+        )
+        print(
+            f"Updated Qdrant metadata for filter: {filter_conditions}, update: {metadata_update}"
+        )
         return True
     except Exception as e:
         print(f"Error updating vector metadata: {e}")

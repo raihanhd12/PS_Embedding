@@ -14,6 +14,7 @@ EMBEDDING_MODEL = config.get(
 # Vector database settings
 QDRANT_URL = config.get("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = config.get("COLLECTION_NAME", "documents")
+VECTOR_SIZE = config.get("VECTOR_SIZE", "384")
 
 # Elasticsearch settings
 ES_URL = config.get("ELASTICSEARCH_URL", "http://localhost:9200")
@@ -31,6 +32,7 @@ MINIO_SECURE = config.get("MINIO_SECURE", "False").lower() == "true"
 # Text processing settings
 DEFAULT_CHUNK_SIZE = int(config.get("DEFAULT_CHUNK_SIZE", "1000"))
 DEFAULT_CHUNK_OVERLAP = int(config.get("DEFAULT_CHUNK_OVERLAP", "200"))
+
 
 # Hybrid search settings
 ENABLE_HYBRID_SEARCH = config.get("ENABLE_HYBRID_SEARCH", "True").lower() == "true"

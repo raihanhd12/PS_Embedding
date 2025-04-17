@@ -1,11 +1,8 @@
-"""
-Text processing service for extraction and chunking
-"""
-
 import uuid
 from typing import Any, Dict, List, Optional
 
 import app.utils.config as config
+from app.services.elasticsearch import ElasticsearchService
 from app.services.embedding import create_embeddings
 from app.services.vector_db import store_vectors
 from app.utils.file_utils import extract_text_from_file
@@ -18,40 +15,25 @@ def split_text_into_chunks(
 ) -> List[str]:
     """
     Split text into overlapping chunks
-
-    Args:
-        text: Text to split
-        chunk_size: Maximum chunk size in characters
-        overlap: Overlap between chunks in characters
-
-    Returns:
-        List of text chunks
     """
     if not text:
         return []
 
-    # Simple splitting by paragraphs first, then recombining
     paragraphs = text.split("\n\n")
     chunks = []
     current_chunk = ""
 
     for para in paragraphs:
-        # If adding this paragraph exceeds chunk size, save current chunk and start new one
         if len(current_chunk) + len(para) > chunk_size and current_chunk:
             chunks.append(current_chunk.strip())
-            # Keep overlap from end of previous chunk
             words = current_chunk.split()
             if len(words) > overlap:
                 current_chunk = " ".join(words[-overlap:]) + "\n\n"
             else:
                 current_chunk = ""
-
         current_chunk += para + "\n\n"
-
-        # If current chunk is now too big, split it further
         while len(current_chunk) > chunk_size:
             chunks.append(current_chunk[:chunk_size].strip())
-            # Keep overlap from end of previous chunk
             words = current_chunk[:chunk_size].split()
             if len(words) > overlap:
                 current_chunk = (
@@ -59,11 +41,8 @@ def split_text_into_chunks(
                 )
             else:
                 current_chunk = current_chunk[chunk_size:]
-
-    # Add the last chunk if it's not empty
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
-
     return chunks
 
 
@@ -76,23 +55,12 @@ async def process_document(
     base_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Process a document: extract text, chunk it, embed chunks, and store in vector DB
-
-    Args:
-        file_content: Binary file content
-        filename: Original filename
-        content_type: MIME content type
-        chunk_size: Maximum chunk size in characters
-        chunk_overlap: Overlap between chunks in characters
-        base_metadata: Optional base metadata to include with all chunks
-
-    Returns:
-        Dictionary with processing results
+    Process a document: extract text, chunk it, embed chunks, and store in vector DB and Elasticsearch
     """
     try:
         # Extract text
         text = extract_text_from_file(file_content, content_type)
-        if not text or len(text.strip()) < 10:  # Require some minimum amount of text
+        if not text or len(text.strip()) < 10:
             print(f"Warning: Insufficient text extracted from file: {filename}")
             raise ValueError("Insufficient text extracted from file")
 
@@ -104,6 +72,7 @@ async def process_document(
         # Initialize metadata
         if base_metadata is None:
             base_metadata = {}
+        base_metadata["active"] = True  # Set default active status
 
         # Get document ID from metadata if it exists
         document_id = base_metadata.get("file_id")
@@ -119,8 +88,12 @@ async def process_document(
 
         db_service = DatabaseService()
 
+        # Initialize Elasticsearch service
+        es_service = ElasticsearchService()
+
         # Create metadata and save each chunk to database
         vector_ids = []
+        chunk_results = []
         for i, chunk_text in enumerate(chunks):
             try:
                 # Create chunk metadata
@@ -134,7 +107,7 @@ async def process_document(
                     }
                 )
 
-                # First save chunk to database
+                # Save chunk to database
                 print(f"Saving chunk {i} to database")
                 chunk = db_service.create_document_chunk(
                     document_id=document_id,
@@ -143,11 +116,11 @@ async def process_document(
                     metadata=chunk_metadata,
                 )
 
-                # Generate embedding - using the proper return structure
+                # Generate embedding
                 print(f"Creating embedding for chunk {i}")
                 embedding_result = create_embeddings([chunk_text])
 
-                # Extract the embedding from the result
+                # Extract the embedding
                 if "embeddings" in embedding_result and embedding_result["embeddings"]:
                     embedding = embedding_result["embeddings"][0]
 
@@ -157,9 +130,32 @@ async def process_document(
                     store_vectors([embedding], [chunk_metadata], [vector_id])
                     vector_ids.append(vector_id)
 
-                    # Update the chunk in database with embedding ID
+                    # Update chunk in database with embedding ID
                     db_service.update_chunk_embedding(chunk.id, vector_id)
                     print(f"Chunk {i} processed with vector ID: {vector_id}")
+
+                    # Index chunk in Elasticsearch
+                    es_document = {
+                        "file_id": document_id,
+                        "filename": filename,
+                        "content_type": content_type,
+                        "text": chunk_text,
+                        "chunk_index": i,
+                        "embedding_id": vector_id,
+                        "metadata": chunk_metadata,
+                    }
+                    es_success = es_service.index_document(
+                        doc_id=vector_id, document=es_document
+                    )
+                    if not es_success:
+                        print(
+                            f"Failed to index chunk {i} of document {document_id} in Elasticsearch"
+                        )
+
+                    # Store chunk result
+                    chunk_results.append(
+                        {"text": chunk_text, "metadata": chunk_metadata}
+                    )
                 else:
                     print(f"Warning: No embedding generated for chunk {i}")
 
@@ -172,7 +168,7 @@ async def process_document(
 
         return {
             "filename": filename,
-            "chunks": len(chunks),
+            "chunks": chunk_results,
             "vector_ids": vector_ids,
             "file_id": document_id,
         }

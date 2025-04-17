@@ -1,10 +1,8 @@
-"""
-Elasticsearch service for keyword search and hybrid search
-"""
-from typing import List, Dict, Any, Optional
-import requests
 import json
 import os
+from typing import Any, Dict, List, Optional
+
+import requests
 
 # Elasticsearch configuration
 ES_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
@@ -30,21 +28,9 @@ class ElasticsearchService:
         self._init_index()
 
     def _init_index(self) -> bool:
-        """
-        Initialize index with proper mappings
-
-        Returns:
-            bool: True if successful
-        """
         try:
-            # Check if index exists
-            response = requests.head(
-                f"{self.base_url}/{self.index}",
-                auth=self.auth
-            )
-
+            response = requests.head(f"{self.base_url}/{self.index}", auth=self.auth)
             if response.status_code != 200:
-                # Create index with mappings
                 mapping = {
                     "mappings": {
                         "properties": {
@@ -52,58 +38,49 @@ class ElasticsearchService:
                             "chunk_index": {"type": "integer"},
                             "filename": {"type": "keyword"},
                             "content_type": {"type": "keyword"},
-                            "text": {
-                                "type": "text",
-                                "analyzer": "standard"
-                            },
+                            "text": {"type": "text", "analyzer": "standard"},
                             "embedding_id": {"type": "keyword"},
-                            "metadata": {"type": "object"}
+                            "metadata": {
+                                "type": "object",
+                                "properties": {
+                                    "active": {
+                                        "type": "boolean"
+                                    }  # Explicitly map active as boolean
+                                },
+                            },
                         }
                     },
-                    "settings": {
-                        "number_of_shards": 1,
-                        "number_of_replicas": 0
-                    }
+                    "settings": {"number_of_shards": 1, "number_of_replicas": 0},
                 }
-
                 create_response = requests.put(
-                    f"{self.base_url}/{self.index}",
-                    json=mapping,
-                    auth=self.auth
+                    f"{self.base_url}/{self.index}", json=mapping, auth=self.auth
                 )
-
                 if create_response.status_code in (200, 201):
                     print(f"Created Elasticsearch index: {self.index}")
                     return True
                 else:
                     print(
-                        f"Failed to create Elasticsearch index: {create_response.status_code}")
+                        f"Failed to create Elasticsearch index: {create_response.status_code}"
+                    )
                     print(create_response.text)
                     return False
-
             return True
         except Exception as e:
             print(f"Error initializing Elasticsearch index: {e}")
             return False
 
     def index_document(self, doc_id: str, document: Dict[str, Any]) -> bool:
-        """
-        Index a document in Elasticsearch
-
-        Args:
-            doc_id: Document ID
-            document: Document data
-
-        Returns:
-            bool: True if successful
-        """
         try:
+            # Ensure metadata.active is set
+            if "metadata" not in document:
+                document["metadata"] = {}
+            if "active" not in document["metadata"]:
+                document["metadata"]["active"] = True
             response = requests.put(
                 f"{self.base_url}/{self.index}/_doc/{doc_id}",
                 json=document,
-                auth=self.auth
+                auth=self.auth,
             )
-
             return response.status_code in (200, 201)
         except Exception as e:
             print(f"Error indexing document: {e}")
@@ -124,28 +101,26 @@ class ElasticsearchService:
 
             for doc in documents:
                 # Each document should have an 'id' field
-                doc_id = doc.pop('id', None)
+                doc_id = doc.pop("id", None)
                 if not doc_id:
                     continue
 
                 # Add index action and document
-                bulk_data.append(
-                    {"index": {"_index": self.index, "_id": doc_id}})
+                bulk_data.append({"index": {"_index": self.index, "_id": doc_id}})
                 bulk_data.append(doc)
 
             if not bulk_data:
                 return False
 
             # Convert to newline-delimited JSON
-            bulk_body = "\n".join([json.dumps(item)
-                                  for item in bulk_data]) + "\n"
+            bulk_body = "\n".join([json.dumps(item) for item in bulk_data]) + "\n"
 
             # Send bulk request
             response = requests.post(
                 f"{self.base_url}/_bulk",
                 headers={"Content-Type": "application/x-ndjson"},
                 data=bulk_body,
-                auth=self.auth
+                auth=self.auth,
             )
 
             result = response.json()
@@ -158,62 +133,90 @@ class ElasticsearchService:
             print(f"Error bulk indexing: {e}")
             return False
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Search documents by keyword
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            filters: Optional filters
-
-        Returns:
-            List[Dict[str, Any]]: Search results
-        """
+    def fix_active_metadata(self):
         try:
-            # Build query
-            es_query = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"match": {"text": query}}
-                        ]
-                    }
-                },
-                "size": limit
-            }
+            # Scan all documents
+            query = {"query": {"match_all": {}}, "size": 1000}
+            response = requests.post(
+                f"{self.base_url}/{self.index}/_search?scroll=1m",
+                json=query,
+                auth=self.auth,
+            )
+            result = response.json()
+            scroll_id = result.get("_scroll_id")
+            hits = result.get("hits", {}).get("hits", [])
+            while hits:
+                for hit in hits:
+                    doc_id = hit["_id"]
+                    source = hit["_source"]
+                    if "metadata" not in source or "active" not in source["metadata"]:
+                        # Set default active value
+                        update_query = {
+                            "script": {
+                                "source": "ctx._source.metadata.active = params.active",
+                                "params": {"active": True},
+                            }
+                        }
+                        requests.post(
+                            f"{self.base_url}/{self.index}/_update/{doc_id}",
+                            json=update_query,
+                            auth=self.auth,
+                        )
+                # Fetch next batch
+                response = requests.post(
+                    f"{self.base_url}/_search/scroll",
+                    json={"scroll": "1m", "scroll_id": scroll_id},
+                    auth=self.auth,
+                )
+                result = response.json()
+                scroll_id = result.get("_scroll_id")
+                hits = result.get("hits", {}).get("hits", [])
+            # Clear scroll
+            requests.delete(
+                f"{self.base_url}/_search/scroll",
+                json={"scroll_id": [scroll_id]},
+                auth=self.auth,
+            )
+        except Exception as e:
+            print(f"Error fixing metadata: {e}")
 
-            # Add filters if provided
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        try:
+            es_query = {
+                "query": {"bool": {"must": [{"match": {"text": query}}]}},
+                "size": limit,
+            }
             if filters:
                 filter_list = []
                 for key, value in filters.items():
-                    filter_list.append({"term": {key: value}})
-
+                    if key == "metadata.active" and value is True:
+                        # Explicitly match metadata.active=true and ensure the field exists
+                        filter_list.append(
+                            {
+                                "bool": {
+                                    "filter": [
+                                        {"term": {"metadata.active": True}},
+                                        {"exists": {"field": "metadata.active"}},
+                                    ]
+                                }
+                            }
+                        )
+                    else:
+                        filter_list.append({"term": {key: value}})
                 if filter_list:
                     es_query["query"]["bool"]["filter"] = filter_list
-
-            # Send search request
             response = requests.post(
-                f"{self.base_url}/{self.index}/_search",
-                json=es_query,
-                auth=self.auth
+                f"{self.base_url}/{self.index}/_search", json=es_query, auth=self.auth
             )
-
             if response.status_code != 200:
                 print(f"Search failed: {response.status_code}")
                 return []
-
-            # Parse results
             result = response.json()
             hits = result.get("hits", {}).get("hits", [])
-
-            # Format results
             return [
-                {
-                    "id": hit["_id"],
-                    "score": hit["_score"],
-                    "source": hit["_source"]
-                }
+                {"id": hit["_id"], "score": hit["_score"], "source": hit["_source"]}
                 for hit in hits
             ]
         except Exception as e:
@@ -232,8 +235,7 @@ class ElasticsearchService:
         """
         try:
             response = requests.delete(
-                f"{self.base_url}/{self.index}/_doc/{doc_id}",
-                auth=self.auth
+                f"{self.base_url}/{self.index}/_doc/{doc_id}", auth=self.auth
             )
 
             return response.status_code in (200, 204)
@@ -255,7 +257,7 @@ class ElasticsearchService:
             response = requests.post(
                 f"{self.base_url}/{self.index}/_delete_by_query",
                 json=query,
-                auth=self.auth
+                auth=self.auth,
             )
 
             return response.status_code == 200
@@ -263,30 +265,52 @@ class ElasticsearchService:
             print(f"Error deleting by query: {e}")
             return False
 
-    def hybrid_search(self, query: str, vector_results: List[Dict[str, Any]],
-                      vector_weight: float = 0.7, keyword_weight: float = 0.3,
-                      limit: int = 5) -> List[Dict[str, Any]]:
+    def update_by_query(self, query: Dict[str, Any]) -> bool:
         """
-        Perform hybrid search combining vector and keyword results
+        Update documents matching a query
 
         Args:
-            query: Search query text
-            vector_results: Results from vector search
-            vector_weight: Weight for vector search results (0-1)
-            keyword_weight: Weight for keyword search results (0-1)
-            limit: Maximum number of results to return
+            query: Update query object with script
 
         Returns:
-            List[Dict[str, Any]]: Combined and reranked results
+            bool: True if successful
         """
         try:
-            # Get keyword search results
-            keyword_results = self.search(query, limit=limit*2)
+            response = requests.post(
+                f"{self.base_url}/{self.index}/_update_by_query",
+                json=query,
+                auth=self.auth,
+            )
 
-            # Combine and rerank results
+            if response.status_code == 200:
+                result = response.json()
+                # Check if any documents were updated
+                if result.get("updated", 0) > 0 or result.get("noops", 0) > 0:
+                    return True
+                else:
+                    print(f"No documents updated: {result}")
+                    return False
+            else:
+                print(
+                    f"Update by query failed: {response.status_code}, {response.text}"
+                )
+                return False
+        except Exception as e:
+            print(f"Error updating by query: {e}")
+            return False
+
+    def hybrid_search(
+        self,
+        query: str,
+        vector_results: List[Dict[str, Any]],
+        vector_weight: float = 0.7,
+        keyword_weight: float = 0.3,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            keyword_results = self.search(query, limit=limit * 2, filters=filters)
             combined_results = {}
-
-            # Add vector search results with weight
             for result in vector_results:
                 doc_id = result["id"]
                 combined_results[doc_id] = {
@@ -294,35 +318,29 @@ class ElasticsearchService:
                     "text": result.get("metadata", {}).get("text", ""),
                     "score": result["score"] * vector_weight,
                     "metadata": result.get("metadata", {}),
-                    "source": "vector"
+                    "source": "vector",
                 }
-
-            # Add keyword search results with weight
             for hit in keyword_results:
                 doc_id = hit["id"]
+                # Only include documents where metadata.active is explicitly true
+                metadata = {k: v for k, v in hit["source"].items() if k != "text"}
+                if metadata.get("metadata", {}).get("active") is not True:
+                    continue  # Skip documents that don't satisfy metadata.active=True
                 if doc_id in combined_results:
-                    # Document already in results from vector search
-                    combined_results[doc_id]["score"] += hit["score"] * \
-                        keyword_weight
+                    combined_results[doc_id]["score"] += hit["score"] * keyword_weight
                     combined_results[doc_id]["source"] = "hybrid"
                 else:
                     combined_results[doc_id] = {
                         "id": doc_id,
                         "text": hit["source"].get("text", ""),
                         "score": hit["score"] * keyword_weight,
-                        "metadata": {k: v for k, v in hit["source"].items() if k != "text"},
-                        "source": "keyword"
+                        "metadata": metadata,
+                        "source": "keyword",
                     }
-
-            # Sort by score and limit results
             final_results = sorted(
-                combined_results.values(),
-                key=lambda x: x["score"],
-                reverse=True
+                combined_results.values(), key=lambda x: x["score"], reverse=True
             )[:limit]
-
             return final_results
         except Exception as e:
             print(f"Error in hybrid search: {e}")
-            # Fall back to vector search only
             return vector_results[:limit]

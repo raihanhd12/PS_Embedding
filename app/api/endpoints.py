@@ -57,6 +57,7 @@ async def upload_multiple_documents(
 
     # Parse metadata if provided
     metadata_dict = json.loads(metadata) if metadata else {}
+    metadata_dict["active"] = True  # Set default active status
 
     # Create a storage service instance to reuse
     storage_service = StorageService()
@@ -332,7 +333,6 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
                 "file_id": file_id,
                 "status": "success",
                 "filename": document["filename"],
-                "chunks": result["chunks"],
                 "vector_ids": result["vector_ids"],
             }
 
@@ -351,7 +351,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
     for result in results:
         if result.get("status") == "success":
             successful.append(result)
-            total_chunks += result.get("chunks", 0)
+            total_chunks += len(result.get("chunks", []))
         else:
             failed.append(result)
 
@@ -362,32 +362,55 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
         total_chunks=total_chunks,
     )
 
+
 @router.post("/search", response_model=SearchResponse)
 async def search_endpoint(request: SearchRequest):
     """
     Search for similar text based on semantic similarity
-
     Supports multiple filter conditions in filter_metadata
     """
     try:
         # Generate embedding for query
         query_embedding = embed_texts([request.query])[0]
 
+        # Merge active filter with user-provided filter_metadata
+        filter_conditions = request.filter_metadata or {}
+        filter_conditions["active"] = True
+        print(f"Qdrant filter_conditions: {filter_conditions}")
+
         # Search vectors with filter conditions
         search_results = search_vectors(
             query_vector=query_embedding,
             limit=request.limit,
-            filter_conditions=request.filter_metadata,
+            filter_conditions=filter_conditions,
         )
+        print(f"Qdrant search results: {len(search_results)} items")
+        for result in search_results:
+            print(
+                f"Qdrant result: id={result['id']}, file_id={result['metadata'].get('file_id')}, active={result['metadata'].get('active')}"
+            )
+
+        # Perform hybrid search with the same filter
+        es_service = ElasticsearchService()
+        hybrid_results = es_service.hybrid_search(
+            query=request.query,
+            vector_results=search_results,
+            vector_weight=0.7,
+            keyword_weight=0.3,
+            limit=request.limit,
+            filters={"metadata.active": True},
+        )
+        print(f"Hybrid search results: {len(hybrid_results)} items")
+        for result in hybrid_results:
+            print(
+                f"Hybrid result: id={result['id']}, file_id={result['metadata'].get('file_id')}, active={result['metadata'].get('active')}"
+            )
 
         # Format results
         results = []
-        for result in search_results:
-            # Extract text from metadata
-            text = result["metadata"].get("text", "")
-            # Remove text from metadata to avoid duplication
+        for result in hybrid_results:
+            text = result.get("text", result["metadata"].get("text", ""))
             metadata = {k: v for k, v in result["metadata"].items() if k != "text"}
-
             results.append(
                 ChunkSearchResult(
                     id=result["id"], text=text, score=result["score"], metadata=metadata
@@ -396,7 +419,9 @@ async def search_endpoint(request: SearchRequest):
 
         return SearchResponse(results=results)
     except Exception as e:
+        print(f"Error in search_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
+
 
 # router delete all documents
 @router.delete("/documents/batch")
@@ -478,6 +503,7 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
 
     return results
 
+
 @router.delete("/documents/local/batch")
 async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)):
     """
@@ -552,56 +578,62 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
 
     return results
 
+
 @router.post("/documents/{document_id}/toggle-status")
 async def toggle_document_status(
     document_id: str,
     active: bool = Body(...),
 ):
-    """
-    Enable or disable a document from appearing in search results
-    without deleting it from the system.
-    """
     try:
-        # Get document info
         document = DatabaseService.get_document(document_id)
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
-
-        # Update in PostgreSQL
         metadata = document.get("metadata", {}) or {}
         metadata["active"] = active
         db_success = DatabaseService.update_document_metadata(document_id, metadata)
-
-        # Update in vector DB
-        vector_success = (
-            delete_vectors_by_filter if not active else update_vectors_metadata
-        )
-        vector_operation = vector_success({"file_id": document_id}, {"active": active})
-
-        # Update in Elasticsearch if used
+        print(f"PostgreSQL update success: {db_success}")
+        try:
+            vector_operation = update_vectors_metadata(
+                filter_conditions={"file_id": document_id},
+                metadata_update={"active": active},
+            )
+            print(f"Vector database update result: {vector_operation}")
+        except Exception as ve:
+            print(f"Error in vector database operation: {str(ve)}")
+            vector_operation = False
         es_success = True
         try:
             es_service = ElasticsearchService()
-            es_update_query = {
-                "script": {
-                    "source": "ctx._source.metadata.active = params.active",
-                    "params": {"active": active},
-                },
-                "query": {"term": {"file_id": document_id}},
-            }
-            es_success = (
-                es_service.delete_by_query(es_update_query) if not active else True
+            search_response = es_service.search(
+                query="",
+                filters={"file_id": document_id},
+                limit=1,
             )
-        except Exception as e:
+            print(
+                f"Elasticsearch search found {len(search_response)} documents for file_id: {document_id}"
+            )
+            if not search_response:
+                print(f"No document found in Elasticsearch with file_id: {document_id}")
+                es_success = False
+            else:
+                es_update_query = {
+                    "script": {
+                        "source": "ctx._source.metadata.active = params.active",
+                        "params": {"active": active},
+                    },
+                    "query": {"term": {"file_id": document_id}},
+                }
+                es_success = es_service.update_by_query(es_update_query)
+                print(f"Elasticsearch update success: {es_success}")
+                if not es_success:
+                    print(f"Elasticsearch update failed for document {document_id}")
+        except Exception as es_e:
+            print(f"Elasticsearch operation failed: {str(es_e)}")
             es_success = False
-            print(f"Error updating document {document_id} in Elasticsearch: {e}")
-
-        # Check success
-        if vector_operation and db_success and es_success:
+        if vector_operation and db_success:
             status = "enabled" if active else "disabled"
             return {"success": True, "message": f"Document {status} successfully"}
         else:
-            # Report partial success
             failures = []
             if not vector_operation:
                 failures.append("vector database")
@@ -609,16 +641,17 @@ async def toggle_document_status(
                 failures.append("database")
             if not es_success:
                 failures.append("Elasticsearch")
-
+            print(f"Partial update failed in: {', '.join(failures)}")
             return {
                 "success": False,
                 "error": f"Partial update. Failed in: {', '.join(failures)}",
             }
-
     except Exception as e:
+        print(f"Overall error in toggle_document_status: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"Error updating document: {str(e)}"
         )
+
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge=0)):
@@ -637,6 +670,7 @@ async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge
         raise HTTPException(
             status_code=500, detail=f"Error retrieving documents: {str(e)}"
         )
+
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 async def get_document(document_id: str):
