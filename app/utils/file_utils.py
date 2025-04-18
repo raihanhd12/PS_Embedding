@@ -4,7 +4,6 @@ Enhanced file handling utilities with adaptive OCR for PDFs with mixed content
 
 import io
 import re
-from typing import List
 
 import docx
 import PyPDF2

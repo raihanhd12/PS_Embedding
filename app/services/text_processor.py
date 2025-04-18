@@ -2,7 +2,6 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import app.utils.config as config
-from app.services.elasticsearch import ElasticsearchService
 from app.services.embedding import create_embeddings
 from app.services.vector_db import store_vectors
 from app.utils.file_utils import extract_text_from_file
@@ -55,7 +54,7 @@ async def process_document(
     base_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Process a document: extract text, chunk it, embed chunks, and store in vector DB and Elasticsearch
+    Process a document: extract text, chunk it, embed chunks, and store in vector DB
     """
     try:
         # Extract text
@@ -87,9 +86,6 @@ async def process_document(
         from app.services.database import DatabaseService
 
         db_service = DatabaseService()
-
-        # Initialize Elasticsearch service
-        es_service = ElasticsearchService()
 
         # Create metadata and save each chunk to database
         vector_ids = []
@@ -133,24 +129,6 @@ async def process_document(
                     # Update chunk in database with embedding ID
                     db_service.update_chunk_embedding(chunk.id, vector_id)
                     print(f"Chunk {i} processed with vector ID: {vector_id}")
-
-                    # Index chunk in Elasticsearch
-                    es_document = {
-                        "file_id": document_id,
-                        "filename": filename,
-                        "content_type": content_type,
-                        "text": chunk_text,
-                        "chunk_index": i,
-                        "embedding_id": vector_id,
-                        "metadata": chunk_metadata,
-                    }
-                    es_success = es_service.index_document(
-                        doc_id=vector_id, document=es_document
-                    )
-                    if not es_success:
-                        print(
-                            f"Failed to index chunk {i} of document {document_id} in Elasticsearch"
-                        )
 
                     # Store chunk result
                     chunk_results.append(

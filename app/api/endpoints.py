@@ -365,7 +365,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
 @router.post("/search", response_model=SearchResponse)
 async def search_endpoint(request: SearchRequest):
     """
-    Search for similar text based on semantic similarity using Qdrant
+    Search for similar text based on semantic similarity
     Supports multiple filter conditions in filter_metadata
     """
     try:
@@ -406,6 +406,7 @@ async def search_endpoint(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
 
 
+# router delete all documents
 @router.delete("/documents/batch")
 async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=True)):
     """
