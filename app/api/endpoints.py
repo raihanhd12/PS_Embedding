@@ -30,7 +30,6 @@ from app.models.schemas import (
     SearchResponse,
 )
 from app.services.database import DatabaseService
-from app.services.elasticsearch import ElasticsearchService
 from app.services.embedding import embed_texts
 from app.services.storage import StorageService
 from app.services.text_processor import process_document
@@ -43,7 +42,7 @@ from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.utils.security import validate_api_key
 
 # Create API router
-router = APIRouter(prefix="/api", dependencies=[Depends(validate_api_key)])
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(validate_api_key)])
 
 
 @router.post("/upload/batch", response_model=MultiDocumentUploadResponse)
@@ -366,7 +365,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
 @router.post("/search", response_model=SearchResponse)
 async def search_endpoint(request: SearchRequest):
     """
-    Search for similar text based on semantic similarity
+    Search for similar text based on semantic similarity using Qdrant
     Supports multiple filter conditions in filter_metadata
     """
     try:
@@ -390,26 +389,10 @@ async def search_endpoint(request: SearchRequest):
                 f"Qdrant result: id={result['id']}, file_id={result['metadata'].get('file_id')}, active={result['metadata'].get('active')}"
             )
 
-        # Perform hybrid search with the same filter
-        es_service = ElasticsearchService()
-        hybrid_results = es_service.hybrid_search(
-            query=request.query,
-            vector_results=search_results,
-            vector_weight=0.7,
-            keyword_weight=0.3,
-            limit=request.limit,
-            filters={"metadata.active": True},
-        )
-        print(f"Hybrid search results: {len(hybrid_results)} items")
-        for result in hybrid_results:
-            print(
-                f"Hybrid result: id={result['id']}, file_id={result['metadata'].get('file_id')}, active={result['metadata'].get('active')}"
-            )
-
         # Format results
         results = []
-        for result in hybrid_results:
-            text = result.get("text", result["metadata"].get("text", ""))
+        for result in search_results:
+            text = result.get("metadata", {}).get("text", "")
             metadata = {k: v for k, v in result["metadata"].items() if k != "text"}
             results.append(
                 ChunkSearchResult(
@@ -423,14 +406,12 @@ async def search_endpoint(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
 
 
-# router delete all documents
 @router.delete("/documents/batch")
 async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=True)):
     """
     Delete multiple documents at once from all services:
     - PostgreSQL database
     - Vector database (Qdrant)
-    - Elasticsearch
     - MinIO storage
     """
     results = {"successful": [], "failed": [], "total_deleted": 0}
@@ -449,17 +430,6 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
             # Delete vectors from Qdrant
             vector_success = delete_vectors_by_filter({"file_id": file_id})
 
-            # Delete from Elasticsearch if available
-            es_success = True
-            try:
-                es_service = ElasticsearchService()
-                es_success = es_service.delete_by_query(
-                    {"query": {"term": {"file_id": file_id}}}
-                )
-            except Exception as e:
-                es_success = False
-                print(f"Error deleting document {file_id} from Elasticsearch: {e}")
-
             # Delete from MinIO if storage path exists
             minio_success = True
             if storage_path:
@@ -474,7 +444,7 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
             db_success = DatabaseService.delete_document(file_id)
 
             # Check if all operations were successful
-            if vector_success and db_success and es_success and minio_success:
+            if vector_success and db_success and minio_success:
                 results["successful"].append(
                     {"id": file_id, "message": "Successfully deleted"}
                 )
@@ -486,8 +456,6 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
                     failures.append("vector database")
                 if not db_success:
                     failures.append("database")
-                if not es_success:
-                    failures.append("Elasticsearch")
                 if not minio_success:
                     failures.append("storage")
 
@@ -510,7 +478,6 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
     Delete multiple local document embeddings:
     - PostgreSQL database
     - Vector database (Qdrant)
-    - Elasticsearch
     """
     results = {"successful": [], "failed": [], "total_deleted": 0}
 
@@ -536,22 +503,11 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
             # Delete vectors from Qdrant
             vector_success = delete_vectors_by_filter({"file_id": file_id})
 
-            # Delete from Elasticsearch if available
-            es_success = True
-            try:
-                es_service = ElasticsearchService()
-                es_success = es_service.delete_by_query(
-                    {"query": {"term": {"file_id": file_id}}}
-                )
-            except Exception as e:
-                es_success = False
-                print(f"Error deleting document {file_id} from Elasticsearch: {e}")
-
             # Delete from PostgreSQL
             db_success = DatabaseService.delete_document(file_id)
 
             # Check if all operations were successful
-            if vector_success and db_success and es_success:
+            if vector_success and db_success:
                 results["successful"].append(
                     {"id": file_id, "message": "Successfully deleted"}
                 )
@@ -563,8 +519,6 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
                     failures.append("vector database")
                 if not db_success:
                     failures.append("database")
-                if not es_success:
-                    failures.append("Elasticsearch")
 
                 results["failed"].append(
                     {
@@ -588,10 +542,16 @@ async def toggle_document_status(
         document = DatabaseService.get_document(document_id)
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
+
+        # Update metadata
         metadata = document.get("metadata", {}) or {}
         metadata["active"] = active
+
+        # Update in PostgreSQL
         db_success = DatabaseService.update_document_metadata(document_id, metadata)
         print(f"PostgreSQL update success: {db_success}")
+
+        # Update in Qdrant
         try:
             vector_operation = update_vectors_metadata(
                 filter_conditions={"file_id": document_id},
@@ -601,35 +561,7 @@ async def toggle_document_status(
         except Exception as ve:
             print(f"Error in vector database operation: {str(ve)}")
             vector_operation = False
-        es_success = True
-        try:
-            es_service = ElasticsearchService()
-            search_response = es_service.search(
-                query="",
-                filters={"file_id": document_id},
-                limit=1,
-            )
-            print(
-                f"Elasticsearch search found {len(search_response)} documents for file_id: {document_id}"
-            )
-            if not search_response:
-                print(f"No document found in Elasticsearch with file_id: {document_id}")
-                es_success = False
-            else:
-                es_update_query = {
-                    "script": {
-                        "source": "ctx._source.metadata.active = params.active",
-                        "params": {"active": active},
-                    },
-                    "query": {"term": {"file_id": document_id}},
-                }
-                es_success = es_service.update_by_query(es_update_query)
-                print(f"Elasticsearch update success: {es_success}")
-                if not es_success:
-                    print(f"Elasticsearch update failed for document {document_id}")
-        except Exception as es_e:
-            print(f"Elasticsearch operation failed: {str(es_e)}")
-            es_success = False
+
         if vector_operation and db_success:
             status = "enabled" if active else "disabled"
             return {"success": True, "message": f"Document {status} successfully"}
@@ -639,8 +571,6 @@ async def toggle_document_status(
                 failures.append("vector database")
             if not db_success:
                 failures.append("database")
-            if not es_success:
-                failures.append("Elasticsearch")
             print(f"Partial update failed in: {', '.join(failures)}")
             return {
                 "success": False,

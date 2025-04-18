@@ -113,81 +113,6 @@ def initialize_qdrant():
         return False
 
 
-def initialize_elasticsearch(args):
-    """Initialize Elasticsearch indices"""
-    print("\n🔄 Initializing Elasticsearch...")
-    try:
-        # Check if Elasticsearch is running
-        try:
-            auth = None
-            if config.ES_USERNAME and config.ES_PASSWORD:
-                auth = (config.ES_USERNAME, config.ES_PASSWORD)
-
-            response = requests.get(f"{config.ES_URL}", auth=auth)
-            if response.status_code != 200:
-                print(f"❌ Elasticsearch returned status code {response.status_code}")
-                return False
-        except requests.RequestException as e:
-            print(f"❌ Cannot connect to Elasticsearch at {config.ES_URL}: {e}")
-            print("Make sure Elasticsearch is running and accessible.")
-            return False
-
-        # Create index with mappings
-        mapping = {
-            "mappings": {
-                "properties": {
-                    "file_id": {"type": "keyword"},
-                    "chunk_index": {"type": "integer"},
-                    "filename": {"type": "keyword"},
-                    "content_type": {"type": "keyword"},
-                    "text": {"type": "text", "analyzer": "standard"},
-                    "embedding_id": {"type": "keyword"},
-                    "metadata": {"type": "object"},
-                }
-            },
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
-        }
-
-        # Check if index exists and delete if force option is specified
-        index_exists = (
-            requests.head(f"{config.ES_URL}/{config.ES_INDEX}", auth=auth).status_code
-            == 200
-        )
-
-        if index_exists and args:
-            print(f"🗑️ Deleting existing Elasticsearch index '{config.ES_INDEX}'...")
-            delete_response = requests.delete(
-                f"{config.ES_URL}/{config.ES_INDEX}", auth=auth
-            )
-            if delete_response.status_code not in (200, 404):
-                print(
-                    f"❌ Failed to delete Elasticsearch index: {delete_response.status_code}"
-                )
-                print(delete_response.text)
-                return False
-            index_exists = False
-
-        if not index_exists:
-            create_response = requests.put(
-                f"{config.ES_URL}/{config.ES_INDEX}", json=mapping, auth=auth
-            )
-
-            if create_response.status_code not in (200, 201):
-                print(
-                    f"❌ Failed to create Elasticsearch index: {create_response.status_code}"
-                )
-                print(create_response.text)
-                return False
-            print(f"✅ Elasticsearch index '{config.ES_INDEX}' created")
-        else:
-            print(f"✅ Elasticsearch index '{config.ES_INDEX}' already exists")
-
-        return True
-    except Exception as e:
-        print(f"❌ Error initializing Elasticsearch: {e}")
-        return False
-
-
 def initialize_minio():
     """Initialize MinIO bucket"""
     print("\n🔄 Initializing MinIO storage...")
@@ -227,23 +152,6 @@ def verify_all_services():
         print(f"❌ Qdrant check failed: {e}")
         all_ok = False
 
-    # Check Elasticsearch
-    try:
-        auth = None
-        if config.ES_USERNAME and config.ES_PASSWORD:
-            auth = (config.ES_USERNAME, config.ES_PASSWORD)
-
-        response = requests.get(f"{config.ES_URL}/_cluster/health", auth=auth)
-        if response.status_code == 200:
-            status = response.json().get("status")
-            print(f"✅ Elasticsearch is operational with status '{status}'")
-        else:
-            print(f"❌ Elasticsearch check failed, status code: {response.status_code}")
-            all_ok = False
-    except requests.RequestException as e:
-        print(f"❌ Elasticsearch check failed: {e}")
-        all_ok = False
-
     # Check MinIO
     try:
         storage = StorageService()
@@ -262,7 +170,7 @@ def print_connection_info():
     # Parse DB_URL
     parsed_url = urlparse(DB_URL)
 
-    # Ambil username dan password dari parsed URL
+    # Get username and password from parsed URL
     db_user = parsed_url.username
     db_password = parsed_url.password or ""
 
@@ -270,22 +178,13 @@ def print_connection_info():
     print("\n📋 Connection Information:")
     print(f"  • PostgreSQL: {config.DB_URL}")
     print(f"  • Qdrant: {config.QDRANT_URL}")
-    print(f"  • Elasticsearch: {config.ES_URL}/{config.ES_INDEX}")
     print(f"  • MinIO: {config.MINIO_ENDPOINT}/{config.MINIO_BUCKET_NAME}")
     print("\n🔐 Credentials (from .env):")
     print(f"  • PostgreSQL: {db_user}:{'*' * len(db_password)}")
     print(f"  • MinIO: {config.MINIO_ACCESS_KEY}:{'*' * len(config.MINIO_SECRET_KEY)}")
-    if config.ES_USERNAME:
-        print(
-            f"  • Elasticsearch: {config.ES_USERNAME}:{'*' * len(config.ES_PASSWORD)}"
-        )
 
     print("\n🌐 Admin Interfaces:")
     print(f"  • Qdrant Dashboard: {config.QDRANT_URL.rstrip('/')}/dashboard")
-    # Extract host and port from ES_URL
-    es_host = config.ES_URL.replace("http://", "").replace("https://", "").split("/")[0]
-    kibana_url = f"http://{es_host.split(':')[0]}:5601"
-    print(f"  • Kibana (Elasticsearch): {kibana_url}")
 
     # Extract host and port from MINIO_ENDPOINT
     minio_host = config.MINIO_ENDPOINT.split(":")[0]
@@ -311,9 +210,6 @@ if __name__ == "__main__":
         all_ok = False
 
     if not initialize_qdrant():
-        all_ok = False
-
-    if not initialize_elasticsearch(True):
         all_ok = False
 
     if not initialize_minio():

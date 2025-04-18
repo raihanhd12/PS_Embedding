@@ -1,5 +1,4 @@
 docx
-elasticsearch
 fastapi
 huggingface_hub
 minio

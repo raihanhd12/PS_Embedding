@@ -84,59 +84,6 @@ def reset_qdrant():
         return False
 
 
-def reset_elasticsearch():
-    """Reset Elasticsearch indices"""
-    print("\n🔄 Resetting Elasticsearch...")
-    try:
-        # Delete index if it exists
-        print(f"🗑️ Deleting index '{config.ES_INDEX}'...")
-
-        auth = None
-        if config.ES_USERNAME and config.ES_PASSWORD:
-            auth = (config.ES_USERNAME, config.ES_PASSWORD)
-
-        response = requests.delete(f"{config.ES_URL}/{config.ES_INDEX}", auth=auth)
-
-        if response.status_code in (200, 404):
-            print(f"✅ Index '{config.ES_INDEX}' deleted or not found")
-        else:
-            print(f"❌ Failed to delete index: {response.status_code}")
-            print(response.text)
-            return False
-
-        # Create new index with mappings
-        print(f"🔄 Creating new index '{config.ES_INDEX}'...")
-        mapping = {
-            "mappings": {
-                "properties": {
-                    "file_id": {"type": "keyword"},
-                    "chunk_index": {"type": "integer"},
-                    "filename": {"type": "keyword"},
-                    "content_type": {"type": "keyword"},
-                    "text": {"type": "text", "analyzer": "standard"},
-                    "embedding_id": {"type": "keyword"},
-                    "metadata": {"type": "object"},
-                }
-            },
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
-        }
-
-        create_response = requests.put(
-            f"{config.ES_URL}/{config.ES_INDEX}", json=mapping, auth=auth
-        )
-
-        if create_response.status_code in (200, 201):
-            print(f"✅ New index '{config.ES_INDEX}' created")
-            return True
-        else:
-            print(f"❌ Failed to create new index: {create_response.status_code}")
-            print(create_response.text)
-            return False
-    except Exception as e:
-        print(f"❌ Error resetting Elasticsearch: {e}")
-        return False
-
-
 def reset_minio():
     """Reset MinIO bucket"""
     print("\n🔄 Resetting MinIO storage...")
@@ -185,9 +132,6 @@ if __name__ == "__main__":
         all_ok = False
 
     if not reset_qdrant():
-        all_ok = False
-
-    if not reset_elasticsearch():
         all_ok = False
 
     if not reset_minio():
