@@ -1,4 +1,4 @@
-import utils.config as config
+import app.utils.config as config
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
 from starlette.status import HTTP_403_FORBIDDEN

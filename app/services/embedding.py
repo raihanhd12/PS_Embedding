@@ -7,8 +7,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import app.utils.config as config
 from sentence_transformers import SentenceTransformer
-from services.file_utils import extract_text_from_file
-from services.vector_db import VectorDatabaseService
+from app.services.file_utils import extract_text_from_file
+from app.services.vector_db import VectorDatabaseService
 
 
 class EmbeddingService:

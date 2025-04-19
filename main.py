@@ -14,17 +14,18 @@ from app.api.endpoints import router as api_router
 from app.services.database import DatabaseService
 from app.services.vector_db import VectorDatabaseService
 
+vector_db_service = VectorDatabaseService()
+db_service = DatabaseService()
 
 # Define lifespan event handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown events"""
-    # Startup code
-    config.print_config()
+    print("Starting up Embedding API...")
 
     # Initialize database (with error handling)
     try:
-        DatabaseService.init_db()
+        db_service.init_db()
         print("Database initialized successfully")
     except Exception as e:
         print(f"Database initialization warning: {e}")
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize vector database (with error handling)
     try:
-        VectorDatabaseService.init_vector_db()
+        vector_db_service.init_vector_db()
         print("Vector database initialized successfully")
     except Exception as e:
         print(f"Vector database initialization warning: {e}")
