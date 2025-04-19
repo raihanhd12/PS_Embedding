@@ -18,6 +18,8 @@ A modular API service for text embedding and semantic search with PostgreSQL, Qd
 - PostgreSQL
 - Qdrant vector database
 - MinIO object storage
+- Poppler (for PDF processing with pdf2image)
+- Tesseract OCR (for text extraction from images and scanned documents)
 
 ## Installation
 
@@ -41,7 +43,30 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
+### 4. Install Poppler and Tesseract
+
+#### For Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y poppler-utils
+sudo apt-get install -y tesseract-ocr
+```
+
+#### For macOS:
+
+```bash
+brew install poppler
+brew install tesseract
+```
+
+#### For Windows:
+
+- Download and install [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows/releases/)
+- Download and install [Tesseract for Windows](https://github.com/UB-Mannheim/tesseract/wiki)
+- Add both to your PATH environment variable
+
+### 5. Configure environment variables
 
 Copy the example environment file and update it with your settings:
 
@@ -67,7 +92,7 @@ This will start:
 ### 2. Initialize the databases
 
 ```bash
-python scripts/init_db.py
+python scripts/migrate_fresh.py --confirm
 ```
 
 ### 3. Start the API server
@@ -86,14 +111,15 @@ All endpoints require an API key to be sent in the `X-API-Key` header.
 
 ### Document Management
 
-- `POST /api/upload/batch`: Upload multiple documents
-- `POST /api/embedding/batch`: Process and embed documents from file IDs
-- `POST /api/embedding/local`: Process and embed local files
-- `GET /api/documents`: List all documents
-- `GET /api/documents/{document_id}`: Get a specific document
-- `DELETE /api/documents/batch`: Delete multiple documents
-- `DELETE /api/documents/local/batch`: Delete multiple local documents
-- `POST /api/documents/{document_id}/toggle-status`: Enable/disable a document
+- `POST /api/v1/upload/batch`: Upload multiple documents
+- `POST /api/v1/embedding/batch`: Process and embed documents from file IDs
+- `POST /api/v1/embedding/local`: Process and embed local files
+- `GET /api/v1/documents`: List all documents
+- `GET /api/v1/documents/{document_id}`: Get a specific document
+- `DELETE /api/v1/documents/batch`: Delete multiple documents
+- `DELETE /api/v1/documents/local/batch`: Delete multiple local documents
+- `POST /api/v1/documents/{document_id}/toggle-status`: Enable/disable a document
+- `POST /api/v1/search`: Search for semantically similar content
 
 ## Data Flow Architecture
 
@@ -110,7 +136,7 @@ All endpoints require an API key to be sent in the `X-API-Key` header.
 ### Reset All Data
 
 ```bash
-python scripts/reset_db.py --confirm
+python scripts/migrate_fresh.py --confirm
 ```
 
 ### Update the Vector Database
@@ -118,7 +144,7 @@ python scripts/reset_db.py --confirm
 To change the embedding model or modify the vector size:
 
 1. Update the `.env` file with the new settings
-2. Reset the vector database: `python scripts/reset_db.py --confirm`
+2. Reset the vector database: `python scripts/migrate_fresh.py --confirm`
 3. Re-embed your documents
 
 ## Troubleshooting
@@ -126,6 +152,8 @@ To change the embedding model or modify the vector size:
 - **Connection issues**: Ensure all services (PostgreSQL, Qdrant, MinIO) are running
 - **Authentication failures**: Verify API key in the `.env` file and request headers
 - **Embedding errors**: Check for sufficient disk space and memory
+- **PDF extraction fails**: Verify Poppler is correctly installed and accessible
+- **OCR not working**: Ensure Tesseract is properly installed and in your PATH
 
 ## License
 

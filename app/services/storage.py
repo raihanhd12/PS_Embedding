@@ -1,5 +1,5 @@
 """
-Storage service for document storage using MinIO
+Storage service for document storage using MinIO with organized folders
 """
 
 import io
@@ -8,9 +8,10 @@ import tempfile
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-import app.utils.config as config
 from minio import Minio
 from minio.error import S3Error
+
+import app.utils.config as config
 
 # MinIO configuration
 MINIO_ENDPOINT = config.MINIO_ENDPOINT
@@ -21,7 +22,17 @@ MINIO_SECURE = config.MINIO_SECURE
 
 
 class StorageService:
-    """Storage service for documents using MinIO"""
+    """Storage service for documents using MinIO with organized folder structure"""
+
+    # Define folder paths for different content types
+    FOLDER_DOCUMENTS = MINIO_BUCKET_NAME + "/"
+    FOLDER_IMAGES = MINIO_BUCKET_NAME + "images/"
+
+    # Define specific document type folders
+    FOLDER_PDF = MINIO_BUCKET_NAME + "/pdf/"
+    FOLDER_DOCX = MINIO_BUCKET_NAME + "/docx/"
+    FOLDER_TEXT = MINIO_BUCKET_NAME + "/text/"
+    FOLDER_OTHER = MINIO_BUCKET_NAME + "/other/"
 
     def __init__(self):
         """Initialize MinIO client"""
@@ -49,29 +60,79 @@ class StorageService:
             print(f"Error ensuring bucket exists: {e}")
             return False
 
+    def _get_folder_path(
+        self, content_type: str, is_extracted_image: bool = False
+    ) -> str:
+        """
+        Determine the appropriate folder path based on content type
+
+        Args:
+            content_type: Content type (MIME)
+            is_extracted_image: Whether this is an image extracted from a document
+
+        Returns:
+            str: Folder path
+        """
+        if is_extracted_image:
+            return self.FOLDER_IMAGES
+
+        content_type_lower = content_type.lower()
+
+        if "pdf" in content_type_lower:
+            return self.FOLDER_PDF
+        elif "docx" in content_type_lower or "document" in content_type_lower:
+            return self.FOLDER_DOCX
+        elif "text" in content_type_lower:
+            return self.FOLDER_TEXT
+        elif "image" in content_type_lower:
+            return self.FOLDER_IMAGES
+        else:
+            return self.FOLDER_OTHER
+
     async def upload_file(
         self,
         file_content: bytes,
         filename: str,
         content_type: str,
         metadata: Optional[Dict[str, str]] = None,
+        is_extracted_image: bool = False,
+        document_id: Optional[str] = None,
     ) -> Tuple[bool, str]:
         """
-        Upload a file to MinIO
+        Upload a file to MinIO with organized folder structure
 
         Args:
             file_content: File content as bytes
             filename: Original filename
             content_type: Content type (MIME)
             metadata: Optional metadata
+            is_extracted_image: Whether this is an image extracted from a document
+            document_id: Optional document ID (used for organizing extracted content)
 
         Returns:
             Tuple[bool, str]: Success flag and object name
         """
         try:
-            # Generate unique object name
+            # Get appropriate folder based on content type
+            folder_path = self._get_folder_path(content_type, is_extracted_image)
+
+            # Add document_id subfolder for extracted content if provided
+            if is_extracted_image and document_id:
+                folder_path += f"{document_id}/"
+
+            # Generate unique object name with folder prefix
             ext = os.path.splitext(filename)[1]
-            object_name = f"{uuid.uuid4()}{ext}"
+            object_id = str(uuid.uuid4())
+            object_name = f"{folder_path}{object_id}{ext}"
+
+            # Ensure metadata is dict
+            if metadata is None:
+                metadata = {}
+
+            # Add folder location to metadata
+            metadata["folder"] = folder_path
+            if document_id:
+                metadata["document_id"] = document_id
 
             # Upload to MinIO
             self.client.put_object(
@@ -149,15 +210,20 @@ class StorageService:
             print(f"Error deleting file: {e}")
             return False
 
-    def list_objects(self) -> List[Dict[str, Any]]:
+    def list_objects(self, prefix: str = "") -> List[Dict[str, Any]]:
         """
-        List all objects in the bucket
+        List objects in the bucket with optional prefix (folder)
+
+        Args:
+            prefix: Optional folder prefix to filter results
 
         Returns:
             List[Dict[str, Any]]: List of objects with metadata
         """
         try:
-            objects = self.client.list_objects(MINIO_BUCKET_NAME, recursive=True)
+            objects = self.client.list_objects(
+                MINIO_BUCKET_NAME, prefix=prefix, recursive=True
+            )
             result = []
 
             for obj in objects:
@@ -173,6 +239,18 @@ class StorageService:
         except S3Error as e:
             print(f"Error listing objects: {e}")
             return []
+
+    def list_folder_contents(self, folder_path: str) -> List[Dict[str, Any]]:
+        """
+        List contents of a specific folder
+
+        Args:
+            folder_path: Folder path (e.g., "documents/pdf/")
+
+        Returns:
+            List of objects in the folder
+        """
+        return self.list_objects(prefix=folder_path)
 
     def get_file_path(self, storage_path):
         """
@@ -193,4 +271,5 @@ class StorageService:
         _, ext = os.path.splitext(storage_path)
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
             temp_file.write(file_content)
+            return temp_file.name
             return temp_file.name

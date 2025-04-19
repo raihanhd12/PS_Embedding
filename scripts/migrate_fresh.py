@@ -92,6 +92,16 @@ def reset_minio():
         # Create storage service
         storage = StorageService()
 
+        # Prepare folder structure after deletion
+        folder_structure = [
+            "documents/",
+            "documents/pdf/",
+            "documents/docx/",
+            "documents/text/",
+            "documents/other/",
+            "images/",
+        ]
+
         # Delete all objects
         print(f"🗑️ Deleting all objects in bucket '{config.MINIO_BUCKET_NAME}'...")
         objects = storage.list_objects()
@@ -106,6 +116,26 @@ def reset_minio():
         # Ensure bucket exists
         storage._ensure_bucket_exists()
         print(f"✅ MinIO bucket '{config.MINIO_BUCKET_NAME}' reset")
+
+        # Create folder structure
+        print(f"🔄 Creating folder structure in MinIO bucket...")
+        try:
+            # MinIO doesn't actually need directory objects to be created,
+            # but we create empty objects to define the structure in the UI
+            for folder in folder_structure:
+                # Use a small empty file as directory marker
+                storage.client.put_object(
+                    bucket_name=config.MINIO_BUCKET_NAME,
+                    object_name=f"{folder}.keep",
+                    data=io.BytesIO(b""),
+                    length=0,
+                )
+                print(f"  • Created folder: {folder}")
+            print(f"✅ Folder structure initialized")
+        except Exception as folder_error:
+            print(f"⚠️ Warning: Error initializing folder structure: {folder_error}")
+            # Continue even if folder creation failed
+
         return True
     except Exception as e:
         print(f"❌ Error resetting MinIO: {e}")
@@ -198,6 +228,25 @@ def verify_all_services():
         storage = StorageService()
         objects = storage.list_objects()
         print(f"✅ MinIO is operational with {len(objects)} objects")
+
+        # Verify folder structure
+        folders = [
+            "documents/.keep",
+            "images/.keep",
+            "documents/pdf/.keep",
+            "documents/docx/.keep",
+            "documents/text/.keep",
+            "documents/other/.keep",
+        ]
+
+        print("🔍 Checking MinIO folder structure...")
+        found_folders = 0
+        for obj in objects:
+            if obj["name"] in folders:
+                found_folders += 1
+                print(f"  • Found folder marker: {obj['name']}")
+
+        print(f"  • {found_folders}/{len(folders)} folder markers found")
     except Exception as e:
         print(f"❌ MinIO check failed: {e}")
         all_ok = False
@@ -228,8 +277,19 @@ def print_connection_info():
     print(f"     - Username: {config.MINIO_ACCESS_KEY}")
     print(f"     - Password: {config.MINIO_SECRET_KEY}")
 
+    # Print folder structure information
+    print("\n📁 MinIO Folder Structure:")
+    print("  • /documents/pdf/ - PDF documents")
+    print("  • /documents/docx/ - Word documents")
+    print("  • /documents/text/ - Text documents")
+    print("  • /documents/other/ - Other document types")
+    print("  • /images/ - Extracted images from documents")
+
 
 if __name__ == "__main__":
+    # Import io for creating empty files
+    import io
+
     # Parse command line arguments
     args = parse_args()
 

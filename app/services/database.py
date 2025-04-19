@@ -18,13 +18,11 @@ from sqlalchemy.orm import relationship, sessionmaker
 
 import app.utils.config as config
 
-# Create SQLAlchemy engine with fallback to SQLite for development
+# Database connection setup
 try:
-    # Try to connect to PostgreSQL
     engine = create_engine(config.DB_URL)
     print("Using PostgreSQL database")
 except Exception as e:
-    # Fallback to SQLite for development/testing
     print(f"PostgreSQL connection failed ({str(e)})")
     print("Using SQLite for development")
     sqlite_path = os.path.join(
@@ -46,10 +44,12 @@ class Document(Base):
     filename = Column(String, nullable=False)
     content_type = Column(String, nullable=False)
     storage_path = Column(String, nullable=True)  # Path in MinIO
-    # Change from func.now to datetime.datetime.now
     created_at = Column(DateTime, default=datetime.datetime.now)
     chunks = relationship(
         "DocumentChunk", back_populates="document", cascade="all, delete-orphan"
+    )
+    images = relationship(
+        "DocumentImage", back_populates="document", cascade="all, delete-orphan"
     )
     doc_metadata = Column(JSON, nullable=True)
 
@@ -64,8 +64,32 @@ class DocumentChunk(Base):
     chunk_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     embedding_id = Column(String, nullable=True)  # ID in vector DB
+    page_number = Column(Integer, nullable=True)  # New field to track page number
     document = relationship("Document", back_populates="chunks")
     chunk_metadata = Column(JSON, nullable=True)
+
+    # References to related images (optional - can be stored in metadata also)
+    related_images = Column(
+        JSON, nullable=True
+    )  # List of image IDs related to this chunk
+
+
+class DocumentImage(Base):
+    """Document image model"""
+
+    __tablename__ = "document_images"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"))
+    page_number = Column(Integer, nullable=False)
+    image_index = Column(Integer, nullable=False)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    format = Column(String, nullable=True)
+    storage_path = Column(String, nullable=True)  # Path in MinIO for the image
+    ocr_text = Column(Text, nullable=True)  # OCR text extracted from the image
+    document = relationship("Document", back_populates="images")
+    image_metadata = Column(JSON, nullable=True)
 
 
 class DatabaseService:
@@ -102,19 +126,17 @@ class DatabaseService:
                     filename=filename,
                     content_type=content_type,
                     storage_path=storage_path,
-                    doc_metadata=metadata
-                    or {},  # Use doc_metadata field name from model
+                    doc_metadata=metadata or {},
                 )
-                print(f"Mencoba menyimpan dokumen dengan ID: {document.id}")
+                print(f"Trying to save document with ID: {document.id}")
                 session.add(document)
                 session.commit()
                 session.refresh(document)
-                print(f"Dokumen berhasil disimpan ke database: {document.id}")
+                print(f"Document successfully saved to database: {document.id}")
                 return document
         except Exception as e:
-            print(f"ERROR SAAT MEMBUAT DOKUMEN: {str(e)}")
-            print(f"Tipe exception: {type(e).__name__}")
-            # Raise exception instead of returning mock object
+            print(f"ERROR CREATING DOCUMENT: {str(e)}")
+            print(f"Exception type: {type(e).__name__}")
             raise e
 
     @staticmethod
@@ -122,8 +144,10 @@ class DatabaseService:
         document_id: str,
         chunk_index: int,
         text: str,
+        page_number: Optional[int] = None,
         embedding_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        related_images: Optional[List[str]] = None,
     ) -> DocumentChunk:
         """
         Create a new document chunk record
@@ -132,8 +156,10 @@ class DatabaseService:
             document_id: Parent document ID
             chunk_index: Chunk index in document
             text: Chunk text content
+            page_number: Page number in the document
             embedding_id: Optional vector DB embedding ID
             metadata: Optional chunk metadata
+            related_images: Optional list of related image IDs
 
         Returns:
             DocumentChunk: Created chunk
@@ -145,8 +171,10 @@ class DatabaseService:
                     document_id=document_id,
                     chunk_index=chunk_index,
                     text=text,
+                    page_number=page_number,
                     embedding_id=embedding_id,
-                    metadata=metadata or {},
+                    chunk_metadata=metadata or {},
+                    related_images=related_images,
                 )
                 session.add(chunk)
                 session.commit()
@@ -160,8 +188,73 @@ class DatabaseService:
                 document_id=document_id,
                 chunk_index=chunk_index,
                 text=text,
+                page_number=page_number,
                 embedding_id=embedding_id,
                 chunk_metadata=metadata or {},
+                related_images=related_images,
+            )
+
+    @staticmethod
+    def create_document_image(
+        document_id: str,
+        page_number: int,
+        image_index: int,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        format: Optional[str] = None,
+        storage_path: Optional[str] = None,
+        ocr_text: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> DocumentImage:
+        """
+        Create a new document image record
+
+        Args:
+            document_id: Parent document ID
+            page_number: Page number where the image appears
+            image_index: Image index on the page
+            width: Image width
+            height: Image height
+            format: Image format
+            storage_path: Optional storage path in MinIO
+            ocr_text: Optional OCR text from the image
+            metadata: Optional image metadata
+
+        Returns:
+            DocumentImage: Created image record
+        """
+        try:
+            with SessionLocal() as session:
+                image = DocumentImage(
+                    id=str(uuid.uuid4()),
+                    document_id=document_id,
+                    page_number=page_number,
+                    image_index=image_index,
+                    width=width,
+                    height=height,
+                    format=format,
+                    storage_path=storage_path,
+                    ocr_text=ocr_text,
+                    image_metadata=metadata or {},
+                )
+                session.add(image)
+                session.commit()
+                session.refresh(image)
+                return image
+        except Exception as e:
+            print(f"Error creating document image: {e}")
+            # Return a mock image with ID for fallback functionality
+            return DocumentImage(
+                id=str(uuid.uuid4()),
+                document_id=document_id,
+                page_number=page_number,
+                image_index=image_index,
+                width=width,
+                height=height,
+                format=format,
+                storage_path=storage_path,
+                ocr_text=ocr_text,
+                image_metadata=metadata or {},
             )
 
     @staticmethod
@@ -258,8 +351,10 @@ class DatabaseService:
                         "document_id": chunk.document_id,
                         "chunk_index": chunk.chunk_index,
                         "text": chunk.text,
+                        "page_number": chunk.page_number,
                         "embedding_id": chunk.embedding_id,
                         "metadata": chunk.chunk_metadata,
+                        "related_images": chunk.related_images,
                     }
                     for chunk in chunks
                 ]
@@ -268,9 +363,48 @@ class DatabaseService:
             return []
 
     @staticmethod
+    def get_document_images(document_id: str) -> List[Dict[str, Any]]:
+        """
+        Get images for a document
+
+        Args:
+            document_id: Document ID
+
+        Returns:
+            List[Dict]: List of image data
+        """
+        try:
+            with SessionLocal() as session:
+                images = (
+                    session.query(DocumentImage)
+                    .filter(DocumentImage.document_id == document_id)
+                    .order_by(DocumentImage.page_number, DocumentImage.image_index)
+                    .all()
+                )
+
+                return [
+                    {
+                        "id": img.id,
+                        "document_id": img.document_id,
+                        "page_number": img.page_number,
+                        "image_index": img.image_index,
+                        "width": img.width,
+                        "height": img.height,
+                        "format": img.format,
+                        "storage_path": img.storage_path,
+                        "ocr_text": img.ocr_text,
+                        "metadata": img.image_metadata,
+                    }
+                    for img in images
+                ]
+        except Exception as e:
+            print(f"Error getting document images: {e}")
+            return []
+
+    @staticmethod
     def delete_document(document_id: str) -> bool:
         """
-        Delete document and all its chunks
+        Delete document and all its chunks and images
 
         Args:
             document_id: Document ID
@@ -291,37 +425,6 @@ class DatabaseService:
                 return True
         except Exception as e:
             print(f"Error deleting document: {e}")
-            return False
-
-    @staticmethod
-    def update_document_metadata(document_id: str, metadata: Dict[str, Any]) -> bool:
-        """
-        Update document metadata
-
-        Args:
-            document_id: Document ID
-            metadata: Updated metadata dictionary
-
-        Returns:
-            bool: True if successful
-        """
-        try:
-            with SessionLocal() as session:
-                document = (
-                    session.query(Document).filter(Document.id == document_id).first()
-                )
-                if not document:
-                    return False
-
-                # Update metadata - preserve existing data and add/overwrite new fields
-                current_metadata = document.doc_metadata or {}
-                updated_metadata = {**current_metadata, **metadata}
-                document.doc_metadata = updated_metadata
-
-                session.commit()
-                return True
-        except Exception as e:
-            print(f"Error updating document metadata: {e}")
             return False
 
     @staticmethod
@@ -367,3 +470,34 @@ class DatabaseService:
         except Exception as e:
             print(f"Error counting documents: {e}")
             return 0
+
+    @staticmethod
+    def update_document_metadata(document_id: str, metadata: Dict[str, Any]) -> bool:
+        """
+        Update document metadata
+
+        Args:
+            document_id: Document ID
+            metadata: Updated metadata dictionary
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            with SessionLocal() as session:
+                document = (
+                    session.query(Document).filter(Document.id == document_id).first()
+                )
+                if not document:
+                    return False
+
+                # Update metadata - preserve existing data and add/overwrite new fields
+                current_metadata = document.doc_metadata or {}
+                updated_metadata = {**current_metadata, **metadata}
+                document.doc_metadata = updated_metadata
+
+                session.commit()
+                return True
+        except Exception as e:
+            print(f"Error updating document metadata: {e}")
+            return False
