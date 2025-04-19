@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.utils.config as config
 from app.api.endpoints import router as api_router
 from app.services.database import DatabaseService
-from app.services.vector_db import init_vector_db
+from app.services.vector_db import VectorDatabaseService
 
 
 # Define lifespan event handler
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize vector database (with error handling)
     try:
-        init_vector_db()
+        VectorDatabaseService.init_vector_db()
         print("Vector database initialized successfully")
     except Exception as e:
         print(f"Vector database initialization warning: {e}")

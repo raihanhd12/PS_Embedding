@@ -1,7 +1,3 @@
-"""
-Database service using SQLAlchemy for PostgreSQL
-"""
-
 import datetime
 import os
 import uuid

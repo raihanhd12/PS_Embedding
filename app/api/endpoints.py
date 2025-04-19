@@ -30,19 +30,20 @@ from app.models.schemas import (
     SearchResponse,
 )
 from app.services.database import DatabaseService
-from app.services.embedding import embed_texts
+from app.services.embedding import EmbeddingService
 from app.services.storage import StorageService
-from app.services.text_processor import process_document
-from app.services.vector_db import (
-    delete_vectors_by_filter,
-    search_vectors,
-    update_vectors_metadata,
-)
+from app.services.vector_db import VectorDatabaseService
 from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.utils.security import validate_api_key
 
 # Create API router
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(validate_api_key)])
+
+# Initialize services
+embedding_service = EmbeddingService()
+vector_db_service = VectorDatabaseService()
+storage_service = StorageService()
+db_service = DatabaseService()
 
 
 @router.post("/upload/batch", response_model=MultiDocumentUploadResponse)
@@ -57,9 +58,6 @@ async def upload_multiple_documents(
     # Parse metadata if provided
     metadata_dict = json.loads(metadata) if metadata else {}
     metadata_dict["active"] = True  # Set default active status
-
-    # Create a storage service instance to reuse
-    storage_service = StorageService()
 
     # Check MinIO connection once
     try:
@@ -95,7 +93,6 @@ async def upload_multiple_documents(
             print(f"File successfully uploaded to MinIO with path: {storage_path}")
 
             # Save to database
-            db_service = DatabaseService()
             document = db_service.create_document(
                 filename=file.filename,
                 content_type=file.content_type,
@@ -193,7 +190,6 @@ async def local_file_embedding(
 
             # Create document record in database first
             try:
-                db_service = DatabaseService()
                 document = db_service.create_document(
                     filename=filename,
                     content_type=content_type,
@@ -214,7 +210,7 @@ async def local_file_embedding(
                 }
 
             # Now process the document for embedding
-            result = await process_document(
+            result = await embedding_service.process_document(
                 file_content=file_content,
                 filename=filename,
                 content_type=content_type,
@@ -240,8 +236,6 @@ async def local_file_embedding(
             return {"file_path": file_path, "status": "error", "message": str(e)}
 
     # Process all local files concurrently
-    import asyncio
-
     tasks = [process_single_local_file(file_path) for file_path in file_paths]
     results = await asyncio.gather(*tasks)
 
@@ -269,9 +263,6 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
     successful = []
     failed = []
     total_chunks = 0
-
-    # Create a storage service to reuse
-    storage_service = StorageService()
 
     async def process_single_document(file_id):
         """Process a single document within the batch"""
@@ -325,7 +316,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
             base_metadata["file_id"] = document["id"]
 
             # Process the document
-            result = await process_document(
+            result = await embedding_service.process_document(
                 file_content=file_content,
                 filename=document["filename"],
                 content_type=document["content_type"],
@@ -357,7 +348,7 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
     for result in results:
         if result.get("status") == "success":
             successful.append(result)
-            total_chunks += len(result.get("chunks", []))
+            total_chunks += len(result.get("vector_ids", []))
         else:
             failed.append(result)
 
@@ -377,7 +368,7 @@ async def search_endpoint(request: SearchRequest):
     """
     try:
         # Generate embedding for query
-        query_embedding = embed_texts([request.query])[0]
+        query_embedding = embedding_service.embed_texts([request.query])[0]
 
         # Merge active filter with user-provided filter_metadata
         filter_conditions = request.filter_metadata or {}
@@ -385,7 +376,7 @@ async def search_endpoint(request: SearchRequest):
         print(f"Qdrant filter_conditions: {filter_conditions}")
 
         # Search vectors with filter conditions
-        search_results = search_vectors(
+        search_results = vector_db_service.search_vectors(
             query_vector=query_embedding,
             limit=request.limit,
             filter_conditions=filter_conditions,
@@ -413,7 +404,6 @@ async def search_endpoint(request: SearchRequest):
         raise HTTPException(status_code=500, detail=f"Error searching: {str(e)}")
 
 
-# router delete all documents
 @router.delete("/documents/batch")
 async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=True)):
     """
@@ -436,13 +426,14 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
             storage_path = doc_info.get("storage_path")
 
             # Delete vectors from Qdrant
-            vector_success = delete_vectors_by_filter({"file_id": file_id})
+            vector_success = vector_db_service.delete_vectors_by_filter(
+                {"file_id": file_id}
+            )
 
             # Delete from MinIO if storage path exists
             minio_success = True
             if storage_path:
                 try:
-                    storage_service = StorageService()
                     minio_success = storage_service.delete_file(storage_path)
                 except Exception as e:
                     minio_success = False
@@ -509,7 +500,9 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
                 continue
 
             # Delete vectors from Qdrant
-            vector_success = delete_vectors_by_filter({"file_id": file_id})
+            vector_success = vector_db_service.delete_vectors_by_filter(
+                {"file_id": file_id}
+            )
 
             # Delete from PostgreSQL
             db_success = DatabaseService.delete_document(file_id)
@@ -546,6 +539,9 @@ async def toggle_document_status(
     document_id: str,
     active: bool = Body(...),
 ):
+    """
+    Toggle the active status of a document in both PostgreSQL and Qdrant
+    """
     try:
         document = DatabaseService.get_document(document_id)
         if not document:
@@ -561,7 +557,7 @@ async def toggle_document_status(
 
         # Update in Qdrant
         try:
-            vector_operation = update_vectors_metadata(
+            vector_operation = vector_db_service.update_vectors_metadata(
                 filter_conditions={"file_id": document_id},
                 metadata_update={"active": active},
             )
@@ -598,7 +594,6 @@ async def get_documents(limit: int = Query(100, ge=1), offset: int = Query(0, ge
     """
     try:
         documents = DatabaseService.get_documents(limit=limit, offset=offset)
-        # Assuming this method exists or needs to be created
         total = DatabaseService.count_documents()
 
         return DocumentListResponse(

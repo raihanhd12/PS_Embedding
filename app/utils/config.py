@@ -31,16 +31,3 @@ DEFAULT_CHUNK_OVERLAP = int(config.get("DEFAULT_CHUNK_OVERLAP", "200"))
 API_PORT = int(config.get("API_PORT", "8001"))
 API_HOST = config.get("API_HOST", "0.0.0.0")
 API_KEY = config.get("API_KEY", "")
-
-
-def print_config():
-    """Print current configuration settings"""
-    print("\n📋 Current Configuration:")
-    print(f"  • Database: {DB_URL}")
-    print(f"  • Embedding Model: {EMBEDDING_MODEL}")
-    print(f"  • Qdrant: {QDRANT_URL}, Collection: {COLLECTION_NAME}")
-    print(f"  • MinIO: {MINIO_ENDPOINT}, Bucket: {MINIO_BUCKET_NAME}")
-    print(f"  • API: {API_HOST}:{API_PORT}")
-    print(
-        f"  • Text Chunking: Size={DEFAULT_CHUNK_SIZE}, Overlap={DEFAULT_CHUNK_OVERLAP}"
-    )

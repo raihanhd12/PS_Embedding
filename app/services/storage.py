@@ -1,20 +1,23 @@
 """
 Storage service for document storage using MinIO
 """
-from typing import Optional, List, Dict, Any, Tuple
+
 import io
-import uuid
-from minio import Minio
-from minio.error import S3Error
 import os
 import tempfile
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
+
+import app.utils.config as config
+from minio import Minio
+from minio.error import S3Error
 
 # MinIO configuration
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET_NAME = os.getenv("MINIO_BUCKET_NAME", "documents")
-MINIO_SECURE = os.getenv("MINIO_SECURE", "False").lower() == "true"
+MINIO_ENDPOINT = config.MINIO_ENDPOINT
+MINIO_ACCESS_KEY = config.MINIO_ACCESS_KEY
+MINIO_SECRET_KEY = config.MINIO_SECRET_KEY
+MINIO_BUCKET_NAME = config.MINIO_BUCKET_NAME
+MINIO_SECURE = config.MINIO_SECURE
 
 
 class StorageService:
@@ -26,7 +29,7 @@ class StorageService:
             endpoint=MINIO_ENDPOINT,
             access_key=MINIO_ACCESS_KEY,
             secret_key=MINIO_SECRET_KEY,
-            secure=MINIO_SECURE
+            secure=MINIO_SECURE,
         )
         self._ensure_bucket_exists()
 
@@ -46,8 +49,13 @@ class StorageService:
             print(f"Error ensuring bucket exists: {e}")
             return False
 
-    async def upload_file(self, file_content: bytes, filename: str, content_type: str,
-                          metadata: Optional[Dict[str, str]] = None) -> Tuple[bool, str]:
+    async def upload_file(
+        self,
+        file_content: bytes,
+        filename: str,
+        content_type: str,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Tuple[bool, str]:
         """
         Upload a file to MinIO
 
@@ -72,7 +80,7 @@ class StorageService:
                 data=io.BytesIO(file_content),
                 length=len(file_content),
                 content_type=content_type,
-                metadata=metadata
+                metadata=metadata,
             )
 
             return True, object_name
@@ -93,9 +101,7 @@ class StorageService:
         """
         try:
             url = self.client.presigned_get_object(
-                bucket_name=MINIO_BUCKET_NAME,
-                object_name=object_name,
-                expires=expires
+                bucket_name=MINIO_BUCKET_NAME, object_name=object_name, expires=expires
             )
             return url
         except S3Error as e:
@@ -114,8 +120,7 @@ class StorageService:
         """
         try:
             response = self.client.get_object(
-                bucket_name=MINIO_BUCKET_NAME,
-                object_name=object_name
+                bucket_name=MINIO_BUCKET_NAME, object_name=object_name
             )
             data = response.read()
             response.close()
@@ -137,8 +142,7 @@ class StorageService:
         """
         try:
             self.client.remove_object(
-                bucket_name=MINIO_BUCKET_NAME,
-                object_name=object_name
+                bucket_name=MINIO_BUCKET_NAME, object_name=object_name
             )
             return True
         except S3Error as e:
@@ -153,16 +157,17 @@ class StorageService:
             List[Dict[str, Any]]: List of objects with metadata
         """
         try:
-            objects = self.client.list_objects(
-                MINIO_BUCKET_NAME, recursive=True)
+            objects = self.client.list_objects(MINIO_BUCKET_NAME, recursive=True)
             result = []
 
             for obj in objects:
-                result.append({
-                    "name": obj.object_name,
-                    "size": obj.size,
-                    "last_modified": obj.last_modified
-                })
+                result.append(
+                    {
+                        "name": obj.object_name,
+                        "size": obj.size,
+                        "last_modified": obj.last_modified,
+                    }
+                )
 
             return result
         except S3Error as e:
