@@ -96,7 +96,10 @@ def search_vectors(
             qdrant_filter = models.Filter(
                 must=[
                     models.FieldCondition(
-                        key=f"metadata.{key}", match=models.MatchValue(value=value)
+                        key=key,
+                        match=models.MatchValue(
+                            value=value
+                        ),  # FIXED: removed "metadata." prefix
                     )
                     for key, value in filter_conditions.items()
                 ]
@@ -162,7 +165,10 @@ def delete_vectors_by_filter(filter_conditions: Dict[str, Any]) -> bool:
         filter_query = models.Filter(
             must=[
                 models.FieldCondition(
-                    key=f"metadata.{key}", match=models.MatchValue(value=value)
+                    key=key,
+                    match=models.MatchValue(
+                        value=value
+                    ),  # FIXED: removed "metadata." prefix
                 )
                 for key, value in filter_conditions.items()
             ]
@@ -193,11 +199,9 @@ def update_vectors_metadata(
         bool: True if successful
     """
     try:
-        # Build filter
+        # Build filter - FIXED: removed "metadata." prefix
         must_conditions = [
-            models.FieldCondition(
-                key=f"metadata.{key}", match=models.MatchValue(value=value)
-            )
+            models.FieldCondition(key=key, match=models.MatchValue(value=value))
             for key, value in filter_conditions.items()
         ]
         filter_query = models.Filter(must=must_conditions)

@@ -191,7 +191,29 @@ async def local_file_embedding(
             base_metadata["file_path"] = file_path  # Store original path
             base_metadata["local_file"] = True  # Flag to indicate this is a local file
 
-            # Process the document directly
+            # Create document record in database first
+            try:
+                db_service = DatabaseService()
+                document = db_service.create_document(
+                    filename=filename,
+                    content_type=content_type,
+                    storage_path=None,  # No MinIO storage path for local files
+                    metadata={"local_path": file_path, **base_metadata},
+                )
+                document_id = document.id
+                print(f"Created document record with ID: {document_id}")
+
+                # Update file_id in metadata to ensure consistency
+                base_metadata["file_id"] = document_id
+            except Exception as db_error:
+                print(f"Error creating document record: {str(db_error)}")
+                return {
+                    "file_path": file_path,
+                    "status": "error",
+                    "message": f"Database error: {str(db_error)}",
+                }
+
+            # Now process the document for embedding
             result = await process_document(
                 file_content=file_content,
                 filename=filename,
@@ -200,21 +222,6 @@ async def local_file_embedding(
                 chunk_overlap=chunk_overlap,
                 base_metadata=base_metadata,
             )
-
-            # Optionally create a document record to track this in the database
-            # This is optional since we're not using MinIO, but helps with tracking
-            try:
-                db_service = DatabaseService()
-                document = db_service.create_document(
-                    filename=filename,
-                    content_type=content_type,
-                    storage_path=None,  # No MinIO storage path
-                    metadata={"local_path": file_path, **base_metadata},
-                )
-                document_id = document.id
-            except Exception as db_error:
-                print(f"Warning: Could not create document record: {str(db_error)}")
-                # Continue even if document record creation fails
 
             # Return success result
             return {
@@ -242,7 +249,7 @@ async def local_file_embedding(
     for result in results:
         if result.get("status") == "success":
             successful.append(result)
-            total_chunks += result.get("chunks", 0)
+            total_chunks += len(result.get("chunks", []))
         else:
             failed.append(result)
 
