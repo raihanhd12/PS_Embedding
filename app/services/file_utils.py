@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import docx
 import fitz  # PyMuPDF
 import pytesseract
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 try:
     import pdfplumber
@@ -360,13 +360,8 @@ class PDFTextExtractor:
             # Get page as image
             img = self.render_page_as_image(doc, page_num, zoom)
 
-            # Convert to grayscale and enhance contrast
-            img = img.convert("L")
-            enhancer = ImageEnhance.Contrast(img)
-            enhanced_img = enhancer.enhance(1.5)
-
             # Perform OCR
-            text = pytesseract.image_to_string(enhanced_img)
+            text = pytesseract.image_to_string(img)
             return text
         except Exception as e:
             print(f"OCR error on page {page_num}: {e}")
@@ -382,12 +377,8 @@ class PDFTextExtractor:
             if pil_image.mode not in ["L"]:
                 pil_image = pil_image.convert("L")
 
-            # Enhance contrast
-            enhancer = ImageEnhance.Contrast(pil_image)
-            enhanced_img = enhancer.enhance(1.5)
-
             # Perform OCR
-            text = pytesseract.image_to_string(enhanced_img)
+            text = pytesseract.image_to_string(pil_image)
 
             # Return extracted text if not empty
             if text and text.strip():
@@ -463,9 +454,6 @@ class ImageTextExtractor:
         try:
             with io.BytesIO(self.file_content) as file:
                 img = Image.open(file)
-                img = img.convert("L")  # Convert to grayscale
-                enhancer = ImageEnhance.Contrast(img)
-                img = enhancer.enhance(1.5)
                 text = pytesseract.image_to_string(img, config="--psm 3 --oem 3")
                 return text
         except Exception as e:
