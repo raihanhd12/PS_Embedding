@@ -11,11 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import config and services
 import app.utils.config as config
 from app.api.v1.endpoints import router as api_router
+from app.middleware.session import session_middleware
 from app.services.database import DatabaseService
 from app.services.vector_db import VectorDatabaseService
 
 vector_db_service = VectorDatabaseService()
 db_service = DatabaseService()
+
 
 # Define lifespan event handler
 @asynccontextmanager
@@ -53,6 +55,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.middleware("http")(session_middleware)
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -61,6 +65,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Include API routes
 app.include_router(api_router)

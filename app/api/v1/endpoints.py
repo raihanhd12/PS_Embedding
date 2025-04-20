@@ -35,6 +35,7 @@ from app.services.storage import StorageService
 from app.services.vector_db import VectorDatabaseService
 from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.utils.security import validate_api_key
+from app.utils.session import get_session_id
 
 # Create API router
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(validate_api_key)])
@@ -50,14 +51,22 @@ db_service = DatabaseService()
 async def upload_multiple_documents(
     files: List[UploadFile] = File(...),
     metadata: Optional[str] = Form(None),
+    session_id: str = Depends(get_session_id),
 ):
     """Upload multiple documents in a single request"""
     successful = []
     failed = []
 
     # Parse metadata if provided
-    metadata_dict = json.loads(metadata) if metadata else {}
+    try:
+        metadata_dict = json.loads(metadata) if metadata and metadata.strip() else {}
+    except json.JSONDecodeError:
+        # Handle invalid JSON gracefully
+        print(f"Invalid JSON metadata received: {metadata}")
+        metadata_dict = {}
+
     metadata_dict["active"] = True  # Set default active status
+    metadata_dict["session_id"] = session_id  # Add session ID
 
     # Check MinIO connection once
     try:
@@ -130,8 +139,14 @@ async def local_file_embedding(
     additional_metadata: Optional[dict] = Body(
         None, description="Additional metadata for all files"
     ),
+    session_id: str = Depends(get_session_id),
     _: str = Depends(validate_api_key),
 ):
+    # Add session ID to metadata
+    if additional_metadata is None:
+        additional_metadata = {}
+    additional_metadata["session_id"] = session_id
+
     successful = []
     failed = []
     total_chunks = 0
@@ -256,7 +271,12 @@ async def local_file_embedding(
 
 
 @router.post("/embedding/batch", response_model=MultiDocumentProcessResponse)
-async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
+async def batch_embedding_endpoint(
+    request: MultiEmbeddingDocumentRequest, session_id: str = Depends(get_session_id)
+):
+    if request.additional_metadata is None:
+        request.additional_metadata = {}
+    request.additional_metadata["session_id"] = session_id
     """
     Process and embed multiple documents from file_ids
     """
@@ -361,7 +381,9 @@ async def batch_embedding_endpoint(request: MultiEmbeddingDocumentRequest):
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_endpoint(request: SearchRequest):
+async def search_endpoint(
+    request: SearchRequest, session_id: str = Depends(get_session_id)
+):
     """
     Search for similar text based on semantic similarity
     Supports multiple filter conditions in filter_metadata
@@ -372,7 +394,8 @@ async def search_endpoint(request: SearchRequest):
 
         # Merge active filter with user-provided filter_metadata
         filter_conditions = request.filter_metadata or {}
-        filter_conditions["active"] = True
+        filter_conditions["active"] = (True,)
+        filter_conditions["session_id"] = session_id
         print(f"Qdrant filter_conditions: {filter_conditions}")
 
         # Search vectors with filter conditions
@@ -405,7 +428,10 @@ async def search_endpoint(request: SearchRequest):
 
 
 @router.delete("/documents/batch")
-async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=True)):
+async def delete_multiple_documents(
+    document_ids: List[str] = Body(..., embed=True),
+    session_id: str = Depends(get_session_id),
+):
     """
     Delete multiple documents at once from all services:
     - PostgreSQL database
@@ -420,6 +446,11 @@ async def delete_multiple_documents(document_ids: List[str] = Body(..., embed=Tr
             doc_info = DatabaseService.get_document(file_id)
             if not doc_info:
                 results["failed"].append({"id": file_id, "error": "Document not found"})
+                continue
+
+            # Check session ownership
+            if doc_info.get("metadata", {}).get("session_id") != session_id:
+                results["failed"].append({"id": file_id, "error": "Access denied"})
                 continue
 
             # Get storage path
@@ -538,6 +569,7 @@ async def delete_local_documents(document_ids: List[str] = Body(..., embed=True)
 async def toggle_document_status(
     document_id: str,
     active: bool = Body(...),
+    session_id: str = Depends(get_session_id),
 ):
     """
     Toggle the active status of a document in both PostgreSQL and Qdrant
@@ -546,6 +578,10 @@ async def toggle_document_status(
         document = DatabaseService.get_document(document_id)
         if not document:
             raise HTTPException(status_code=404, detail="Document not found")
+
+        # Check session ownership
+        if document.get("metadata", {}).get("session_id") != session_id:
+            raise HTTPException(status_code=403, detail="Access denied")
 
         # Update metadata
         metadata = document.get("metadata", {}) or {}
