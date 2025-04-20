@@ -35,7 +35,7 @@ class EmbeddingService:
         overlap: int = config.DEFAULT_CHUNK_OVERLAP,
     ) -> List[str]:
         """
-        Split text into overlapping chunks.
+        Split text into overlapping chunks with minimal whitespace, ensuring the chunks are tightly packed.
 
         Args:
             text: Input text to split.
@@ -48,30 +48,38 @@ class EmbeddingService:
         if not text:
             return []
 
-        paragraphs = text.split("\n\n")
+        # Normalize the text: remove extra spaces and line breaks
+        text = " ".join(
+            text.split()
+        )  # Replace multiple spaces and newlines with a single space
+
         chunks = []
         current_chunk = ""
 
-        for para in paragraphs:
-            if len(current_chunk) + len(para) > chunk_size and current_chunk:
-                chunks.append(current_chunk.strip())
-                words = current_chunk.split()
-                if len(words) > overlap:
-                    current_chunk = " ".join(words[-overlap:]) + "\n\n"
+        words = text.split()  # Split into words for easier management
+        for word in words:
+            # Check if the current chunk with this word exceeds the max chunk size
+            if len(current_chunk) + len(word) + 1 > chunk_size and current_chunk:
+                chunks.append(
+                    current_chunk.strip()
+                )  # Add the current chunk to the list
+                current_chunk = word  # Start a new chunk with the current word
+            else:
+                if current_chunk:
+                    current_chunk += " " + word  # Add the word to the current chunk
                 else:
-                    current_chunk = ""
-            current_chunk += para + "\n\n"
-            while len(current_chunk) > chunk_size:
-                chunks.append(current_chunk[:chunk_size].strip())
-                words = current_chunk[:chunk_size].split()
-                if len(words) > overlap:
-                    current_chunk = (
-                        " ".join(words[-overlap:]) + "\n\n" + current_chunk[chunk_size:]
-                    )
-                else:
-                    current_chunk = current_chunk[chunk_size:]
+                    current_chunk = word  # Start with the first word
+
         if current_chunk.strip():
-            chunks.append(current_chunk.strip())
+            chunks.append(current_chunk.strip())  # Add the last chunk if it's not empty
+
+        # Optionally handle overlap (this could be adjusted if overlap needs to be stricter)
+        if overlap > 0:
+            chunks = [
+                chunks[i] + " " + chunks[i + 1][:overlap]
+                for i in range(len(chunks) - 1)
+            ]
+
         return chunks
 
     def split_text_by_page(
