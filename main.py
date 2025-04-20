@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import config and services
 import app.utils.config as config
-from app.api.endpoints import router as api_router
+from app.api.v1.endpoints import router as api_router
 from app.services.database import DatabaseService
 from app.services.vector_db import VectorDatabaseService
 
