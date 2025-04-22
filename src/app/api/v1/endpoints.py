@@ -19,7 +19,7 @@ from fastapi import (
     UploadFile,
 )
 
-from app.models.schemas import (
+from src.app.schemas.embedding_schema import (
     ChunkSearchResult,
     DocumentListResponse,
     DocumentResponse,
@@ -29,10 +29,10 @@ from app.models.schemas import (
     SearchRequest,
     SearchResponse,
 )
-from app.services.database import DatabaseService
-from app.services.embedding import EmbeddingService
-from app.services.storage import StorageService
-from app.services.vector_db import VectorDatabaseService
+from src.app.services.database_service import DatabaseService
+from src.app.services.embedding_service import EmbeddingService
+from src.app.services.storage_service import StorageService
+from app.services.vector_database_service import VectorDatabaseService
 from app.utils.config import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.utils.security import validate_api_key
 from app.utils.session import get_session_id
@@ -45,7 +45,6 @@ embedding_service = EmbeddingService()
 vector_db_service = VectorDatabaseService()
 storage_service = StorageService()
 db_service = DatabaseService()
-
 
 @router.post("/upload/batch", response_model=MultiDocumentUploadResponse)
 async def upload_multiple_documents(

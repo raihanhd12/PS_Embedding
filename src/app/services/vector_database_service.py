@@ -1,19 +1,20 @@
 from typing import Any, Dict, List, Optional
 
-import app.utils.config as config
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+
+import src.config.env as env
+
+
 class VectorDatabaseService:
     def __init__(self):
         """
         Inisialisasi koneksi ke Qdrant dan koleksi
         """
         # Initialize Qdrant client
-        self.client = QdrantClient(url=config.QDRANT_URL)
-        self.collection_name = config.COLLECTION_NAME
-        self.vector_size = (
-            config.VECTOR_SIZE
-        )  # Ukuran vektor umum untuk model embedding
+        self.client = QdrantClient(url=env.QDRANT_URL)
+        self.collection_name = env.COLLECTION_NAME
+        self.vector_size = env.VECTOR_SIZE  # Ukuran vektor umum untuk model embedding
 
     def init_vector_db(self) -> bool:
         """

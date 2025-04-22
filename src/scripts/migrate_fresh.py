@@ -11,10 +11,10 @@ project_root = current_dir.parent  # PS_Embedding/
 sys.path.insert(0, str(project_root.resolve()))
 
 try:
-    import app.utils.config as config
-    from app.services.database import Base, DatabaseService, engine
-    from app.services.storage import StorageService
-    from app.services.vector_db import VectorDatabaseService
+    import src.config.env as config
+    from src.app.services.database_service import Base, DatabaseService, engine
+    from src.app.services.storage_service import StorageService
+    from app.services.vector_database_service import VectorDatabaseService
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Ensure you are running this script from the project root directory.")

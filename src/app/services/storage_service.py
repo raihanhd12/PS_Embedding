@@ -11,14 +11,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from minio import Minio
 from minio.error import S3Error
 
-import app.utils.config as config
+import src.config.env as env
 
 # MinIO configuration
-MINIO_ENDPOINT = config.MINIO_ENDPOINT
-MINIO_ACCESS_KEY = config.MINIO_ACCESS_KEY
-MINIO_SECRET_KEY = config.MINIO_SECRET_KEY
-MINIO_BUCKET_NAME = config.MINIO_BUCKET_NAME
-MINIO_SECURE = config.MINIO_SECURE
+MINIO_ENDPOINT = env.MINIO_ENDPOINT
+MINIO_ACCESS_KEY = env.MINIO_ACCESS_KEY
+MINIO_SECRET_KEY = env.MINIO_SECRET_KEY
+MINIO_BUCKET_NAME = env.MINIO_BUCKET_NAME
+MINIO_SECURE = env.MINIO_SECURE
 
 
 class StorageService:

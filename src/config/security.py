@@ -1,4 +1,4 @@
-import app.utils.config as config
+import src.config.env as env
 from fastapi import HTTPException, Security
 from fastapi.security import APIKeyHeader
 from starlette.status import HTTP_403_FORBIDDEN
@@ -13,8 +13,8 @@ async def validate_api_key(api_key: str = Security(api_key_header)):
     If no API key is configured in the settings, this is a no-op.
     Otherwise, it checks that the request contains a valid API key.
     """
-    if config.API_KEY and config.API_KEY != "":
-        if api_key != config.API_KEY:
+    if env.API_KEY and env.API_KEY != "":
+        if api_key != env.API_KEY:
             raise HTTPException(
                 status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
             )

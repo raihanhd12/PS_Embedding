@@ -7,11 +7,11 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from sentence_transformers import SentenceTransformer
 
-import app.utils.config as config
-from app.services.database import DatabaseService
-from app.services.file_utils import PDFTextExtractor, extract_text_from_file
-from app.services.storage import StorageService
-from app.services.vector_db import VectorDatabaseService
+import src.config.env as env
+from app.services.file_extractor_service import PDFTextExtractor, extract_text_from_file
+from src.app.services.storage_service import StorageService
+from app.services.vector_database_service import VectorDatabaseService
+from src.app.services.database_service import DatabaseService
 
 
 class EmbeddingService:
@@ -19,7 +19,7 @@ class EmbeddingService:
 
     def __init__(self):
         """Initialize the embedding model and vector database service."""
-        self.model = SentenceTransformer(config.EMBEDDING_MODEL)
+        self.model = SentenceTransformer(env.EMBEDDING_MODEL)
         self.embedding_dimension = self.model.get_sentence_embedding_dimension()
         self.vector_db = VectorDatabaseService()
         self.storage_service = StorageService()
@@ -31,8 +31,8 @@ class EmbeddingService:
     def split_text_into_chunks(
         self,
         text: str,
-        chunk_size: int = config.DEFAULT_CHUNK_SIZE,
-        overlap: int = config.DEFAULT_CHUNK_OVERLAP,
+        chunk_size: int = env.DEFAULT_CHUNK_SIZE,
+        overlap: int = env.DEFAULT_CHUNK_OVERLAP,
     ) -> List[str]:
         """
         Split text into overlapping chunks with minimal whitespace, ensuring the chunks are tightly packed.
@@ -85,8 +85,8 @@ class EmbeddingService:
     def split_text_by_page(
         self,
         text_by_page: Dict[int, str],
-        chunk_size: int = config.DEFAULT_CHUNK_SIZE,
-        overlap: int = config.DEFAULT_CHUNK_OVERLAP,
+        chunk_size: int = env.DEFAULT_CHUNK_SIZE,
+        overlap: int = env.DEFAULT_CHUNK_OVERLAP,
     ) -> List[Dict[str, Any]]:
         """
         Split text by page into chunks while tracking page numbers.
@@ -187,8 +187,8 @@ class EmbeddingService:
         file_content: bytes,
         filename: str,
         content_type: str,
-        chunk_size: int = config.DEFAULT_CHUNK_SIZE,
-        chunk_overlap: int = config.DEFAULT_CHUNK_OVERLAP,
+        chunk_size: int = env.DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = env.DEFAULT_CHUNK_OVERLAP,
         base_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -322,8 +322,8 @@ class EmbeddingService:
         file_content: bytes,
         filename: str,
         content_type: str,
-        chunk_size: int = config.DEFAULT_CHUNK_SIZE,
-        chunk_overlap: int = config.DEFAULT_CHUNK_OVERLAP,
+        chunk_size: int = env.DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = env.DEFAULT_CHUNK_OVERLAP,
         base_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
