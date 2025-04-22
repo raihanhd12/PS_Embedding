@@ -1,3 +1,7 @@
+"""
+Fixed DatabaseService class with proper method decorators
+"""
+
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
@@ -12,6 +16,7 @@ from src.app.models.embedding_model import (
     DocumentPydantic,
 )
 from src.database.factories.embedding_factory import (
+    Base,
     Document,
     DocumentChunk,
     DocumentImage,
@@ -30,6 +35,15 @@ class DatabaseException(Exception):
 
 class DatabaseService:
     """Service for database operations"""
+
+    @staticmethod
+    def init_db():
+        """Initialize database tables"""
+        try:
+            Base.metadata.create_all(bind=engine)
+            print("Database tables initialized")
+        except Exception as e:
+            print(f"Error initializing database tables: {e}")
 
     @staticmethod
     @contextmanager
@@ -67,7 +81,7 @@ class DatabaseService:
         except Exception as e:
             raise DatabaseException(f"Error creating document: {str(e)}")
 
-    @staticmethod
+    @classmethod  # Changed from staticmethod to classmethod
     def create_document_chunk(
         cls, chunk: DocumentChunkPydantic
     ) -> DocumentChunkPydantic:
@@ -90,7 +104,7 @@ class DatabaseService:
         except Exception as e:
             raise DatabaseException(f"Error creating document chunk: {str(e)}")
 
-    @staticmethod
+    @classmethod  # Changed from staticmethod to classmethod
     def create_document_image(
         cls, image: DocumentImagePydantic
     ) -> DocumentImagePydantic:
@@ -123,7 +137,7 @@ class DatabaseService:
         except Exception as e:
             raise DatabaseException(f"Error creating document image: {str(e)}")
 
-    @staticmethod
+    @classmethod  # Changed from staticmethod to classmethod
     def get_document(cls, document_id: str) -> Optional[DocumentPydantic]:
         """Get document by ID.
 

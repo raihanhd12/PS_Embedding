@@ -1,17 +1,17 @@
-import os
 import uuid
 from typing import Any, Dict, List, Optional
-
-# Set environment variable to disable tokenizers parallelism warning
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from sentence_transformers import SentenceTransformer
 
 import src.config.env as env
-from app.services.file_extractor_service import PDFTextExtractor, extract_text_from_file
-from src.app.services.storage_service import StorageService
-from app.services.vector_database_service import VectorDatabaseService
+from src.app.models.embedding_model import DocumentChunkPydantic, DocumentImagePydantic
 from src.app.services.database_service import DatabaseService
+from src.app.services.file_extractor_service import (
+    PDFTextExtractor,
+    extract_text_from_file,
+)
+from src.app.services.storage_service import StorageService
+from src.app.services.vector_database_service import VectorDatabaseService
 
 
 class EmbeddingService:
@@ -19,10 +19,28 @@ class EmbeddingService:
 
     def __init__(self):
         """Initialize the embedding model and vector database service."""
-        self.model = SentenceTransformer(env.EMBEDDING_MODEL)
-        self.embedding_dimension = self.model.get_sentence_embedding_dimension()
-        self.vector_db = VectorDatabaseService()
-        self.storage_service = StorageService()
+        try:
+            self.model = SentenceTransformer(env.EMBEDDING_MODEL)
+            if self.model is None:
+                raise ValueError("SentenceTransformer model failed to initialize")
+
+            self.embedding_dimension = self.model.get_sentence_embedding_dimension()
+            self.vector_db = VectorDatabaseService()
+            self.storage_service = StorageService()
+        except Exception as e:
+            print(f"Error initializing embedding model: {e}")
+            # Set default fallback model if available
+            try:
+                print("Attempting to load fallback model...")
+                self.model = SentenceTransformer(
+                    "all-MiniLM-L6-v2"
+                )  # Common fallback model
+                self.embedding_dimension = self.model.get_sentence_embedding_dimension()
+            except Exception as fallback_error:
+                print(
+                    f"Critical error: Could not initialize embedding model: {fallback_error}"
+                )
+                raise
 
     def get_dimension(self) -> int:
         """Get the embedding dimension of the model."""
@@ -120,20 +138,18 @@ class EmbeddingService:
         return chunks_with_page
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for a list of texts.
-
-        Args:
-            texts: List of text strings to embed.
-
-        Returns:
-            List of embedding vectors.
-        """
+        """Generate embeddings for a list of texts."""
         if not texts:
             return []
 
+        # Filter out None or empty texts
+        valid_texts = [text for text in texts if text and isinstance(text, str)]
+
+        if not valid_texts:
+            return []
+
         embeddings = self.model.encode(
-            texts,
+            valid_texts,
             convert_to_numpy=True,
             show_progress_bar=False,
             batch_size=32,
@@ -376,6 +392,13 @@ class EmbeddingService:
                 for i, chunk_info in enumerate(chunks_with_page):
                     try:
                         chunk_text = chunk_info["text"]
+                        if (
+                            not chunk_text
+                            or not isinstance(chunk_text, str)
+                            or not chunk_text.strip()
+                        ):
+                            print(f"Skipping chunk {i}: empty or invalid text")
+                            continue
                         page_number = chunk_info["page_number"]
 
                         # Prepare chunk metadata
@@ -402,14 +425,15 @@ class EmbeddingService:
 
                         # Save chunk to database
                         print(f"Saving chunk {i} (page {page_number}) to database")
-                        chunk = db_service.create_document_chunk(
+                        chunk_data = DocumentChunkPydantic(
                             document_id=document_id,
                             chunk_index=i,
                             text=chunk_text,
                             page_number=page_number,
-                            metadata=chunk_metadata,
+                            chunk_metadata=chunk_metadata,  # Note it's chunk_metadata, not metadata
                             related_images=related_images,
                         )
+                        chunk = db_service.create_document_chunk(chunk_data)
 
                         # Create embedding
                         print(f"Creating embedding for chunk {i}")
@@ -485,7 +509,7 @@ class EmbeddingService:
                         print(f"Error uploading image to storage: {upload_error}")
 
                     # Create image record in database
-                    image = db_service.create_document_image(
+                    image_data = DocumentImagePydantic(
                         document_id=document_id,
                         page_number=img.get("page_number", 0),
                         image_index=img.get("image_index", img_index),
@@ -494,14 +518,19 @@ class EmbeddingService:
                         format=img.get("format"),
                         storage_path=image_storage_path,
                         ocr_text=img.get("ocr_text"),
-                        metadata={
+                        image_metadata={  # Note it's image_metadata, not metadata
                             "extracted_from": filename,
                             "source": "pdf_extraction",
                         },
                     )
+                    image = db_service.create_document_image(image_data)
 
                     # If image has OCR text, create embeddings for it
-                    if img.get("ocr_text"):
+                    if (
+                        img.get("ocr_text")
+                        and isinstance(img.get("ocr_text"), str)
+                        and img.get("ocr_text").strip()
+                    ):
                         ocr_text = img["ocr_text"]
 
                         # Create metadata for the OCR text
@@ -518,16 +547,20 @@ class EmbeddingService:
                         )
 
                         # Create embedding for the OCR text
-                        ocr_embedding_result = self.create_embeddings([ocr_text])
-                        if (
-                            "embeddings" in ocr_embedding_result
-                            and ocr_embedding_result["embeddings"]
-                        ):
-                            ocr_embedding = ocr_embedding_result["embeddings"][0]
-                            ocr_vector_id = str(uuid.uuid4())
-                            self.vector_db.store_vectors(
-                                [ocr_embedding], [ocr_metadata], [ocr_vector_id]
-                            )
+                        try:
+                            ocr_embedding_result = self.create_embeddings([ocr_text])
+                            if (
+                                ocr_embedding_result
+                                and "embeddings" in ocr_embedding_result
+                                and ocr_embedding_result["embeddings"]
+                            ):
+                                ocr_embedding = ocr_embedding_result["embeddings"][0]
+                                ocr_vector_id = str(uuid.uuid4())
+                                self.vector_db.store_vectors(
+                                    [ocr_embedding], [ocr_metadata], [ocr_vector_id]
+                                )
+                        except Exception as ocr_error:
+                            print(f"Error embedding OCR text: {str(ocr_error)}")
 
                     # Add to stored images list
                     img["id"] = image.id  # Add database ID to the result

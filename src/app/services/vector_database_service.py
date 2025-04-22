@@ -178,15 +178,26 @@ class VectorDatabaseService:
 
             qdrant_filter = None
             if filter_conditions:
-                qdrant_filter = models.Filter(
-                    must=[
+                # Build filter - create a list to store conditions
+                must_conditions = []
+
+                for key, value in filter_conditions.items():
+                    # Make sure to handle tuples correctly - extract the first value if it's a tuple
+                    if isinstance(value, tuple) and len(value) > 0:
+                        actual_value = value[0]
+                    else:
+                        actual_value = value
+
+                    # Add the condition with the corrected value
+                    must_conditions.append(
                         models.FieldCondition(
                             key=key,
-                            match=models.MatchValue(value=value),
+                            match=models.MatchValue(value=actual_value),
                         )
-                        for key, value in filter_conditions.items()
-                    ]
-                )
+                    )
+
+                # Create the filter with the list of conditions
+                qdrant_filter = models.Filter(must=must_conditions)
                 print(f"Qdrant filter applied: {qdrant_filter}")
 
             results = self.client.search(

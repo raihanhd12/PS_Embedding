@@ -7,14 +7,15 @@ from urllib.parse import urlparse
 import requests
 
 current_dir = Path(__file__).resolve().parent  # scripts/
-project_root = current_dir.parent  # PS_Embedding/
+project_root = current_dir.parent.parent  # Main project root
 sys.path.insert(0, str(project_root.resolve()))
 
 try:
     import src.config.env as config
-    from src.app.services.database_service import Base, DatabaseService, engine
+    from src.app.services.database_service import DatabaseService, engine
     from src.app.services.storage_service import StorageService
-    from app.services.vector_database_service import VectorDatabaseService
+    from src.app.services.vector_database_service import VectorDatabaseService
+    from src.database.factories.embedding_factory import Base
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Ensure you are running this script from the project root directory.")
@@ -118,7 +119,7 @@ def reset_minio():
         print(f"✅ MinIO bucket '{config.MINIO_BUCKET_NAME}' reset")
 
         # Create folder structure
-        print(f"🔄 Creating folder structure in MinIO bucket...")
+        print("🔄 Creating folder structure in MinIO bucket...")
         try:
             # MinIO doesn't actually need directory objects to be created,
             # but we create empty objects to define the structure in the UI
@@ -131,7 +132,7 @@ def reset_minio():
                     length=0,
                 )
                 print(f"  • Created folder: {folder}")
-            print(f"✅ Folder structure initialized")
+            print("✅ Folder structure initialized")
         except Exception as folder_error:
             print(f"⚠️ Warning: Error initializing folder structure: {folder_error}")
             # Continue even if folder creation failed

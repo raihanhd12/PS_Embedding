@@ -1,6 +1,5 @@
 from fastapi import Request
 
-
 async def session_middleware(request: Request, call_next):
     # Get session ID from cookie or header
     session_id = request.cookies.get("session_id") or request.headers.get(

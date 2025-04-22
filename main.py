@@ -1,25 +1,20 @@
-"""
-Main application entry point for Embedding API
-"""
-
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import config and services
-import app.utils.config as config
-from app.api.v1.endpoints import router as api_router
-from app.middleware.session import session_middleware
-from app.services.database import DatabaseService
-from app.services.vector_db import VectorDatabaseService
+import src.config.env as env
+from src.app.middleware.session import session_middleware
+from src.app.services.database_service import DatabaseService
+from src.app.services.vector_database_service import VectorDatabaseService
+from src.routes.api.v1 import router
 
+# Initialize services for lifespan events
 vector_db_service = VectorDatabaseService()
 db_service = DatabaseService()
 
 
-# Define lifespan event handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle startup and shutdown events"""
@@ -55,6 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add session middleware
 app.middleware("http")(session_middleware)
 
 # Configure CORS
@@ -66,16 +62,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # Include API routes
-app.include_router(api_router)
+app.include_router(router)
 
 
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
-    return {"message": "Embedding API", "documentation": "/docs", "version": "1.0.0"}
+    return {
+        "message": "Embedding API",
+        "documentation": "/docs",
+        "version": "1.0.0",
+    }
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=config.API_HOST, port=config.API_PORT)
+    uvicorn.run("main:app", host=env.API_HOST, port=env.API_PORT)
