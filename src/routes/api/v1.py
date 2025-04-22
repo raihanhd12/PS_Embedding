@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v1", dependencies=[Depends(validate_api_key)])
 # Initialize controller
 embedding_controller = EmbeddingController()
 
+
 @router.post("/upload/batch", response_model=MultiDocumentUploadResponse)
 async def upload_multiple_documents(
     files: List[UploadFile] = File(...),
@@ -85,6 +86,18 @@ async def delete_multiple_documents(
     - MinIO storage
     """
     return await embedding_controller.delete_documents(document_ids, session_id)
+
+
+@router.delete("/embeddings/batch")
+async def delete_embeddings(
+    document_ids: List[str] = Body(..., embed=True),
+    session_id: str = Depends(get_session_id),
+):
+    """
+    Delete multiple documents at once from all services:
+    - Vector database (Qdrant)
+    """
+    return await embedding_controller.delete_embeddings(document_ids, session_id)
 
 
 @router.delete("/documents/local/batch")

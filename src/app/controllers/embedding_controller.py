@@ -435,7 +435,7 @@ class EmbeddingController:
         for file_id in document_ids:
             try:
                 # Get document info before deleting
-                doc_info = DatabaseService.get_document(file_id)
+                doc_info = self.db_service.get_document(file_id)
                 if not doc_info:
                     results["failed"].append(
                         {"id": file_id, "error": "Document not found"}
@@ -443,7 +443,8 @@ class EmbeddingController:
                     continue
 
                 # Check session ownership
-                if doc_info.get("metadata", {}).get("session_id") != session_id:
+                doc_metadata = getattr(doc_info, "doc_metadata", {}) or {}
+                if doc_metadata.get("session_id") != session_id:
                     results["failed"].append({"id": file_id, "error": "Access denied"})
                     continue
 
@@ -482,6 +483,66 @@ class EmbeddingController:
                         failures.append("database")
                     if not minio_success:
                         failures.append("storage")
+
+                    results["failed"].append(
+                        {
+                            "id": file_id,
+                            "error": f"Partially deleted. Failed in: {', '.join(failures)}",
+                        }
+                    )
+
+            except Exception as e:
+                results["failed"].append({"id": file_id, "error": str(e)})
+
+        return results
+
+    async def delete_embeddings(
+        self, document_ids: List[str], session_id: str = None
+    ) -> Dict:
+        """
+        Delete multiple documents at once from all services:
+        - PostgreSQL database
+        - Vector database (Qdrant)
+        - MinIO storage
+        """
+        results = {"successful": [], "failed": [], "total_deleted": 0}
+
+        for file_id in document_ids:
+            try:
+                # Get document info before deleting
+                doc_info = self.db_service.get_document(file_id)
+                if not doc_info:
+                    results["failed"].append(
+                        {"id": file_id, "error": "Document not found"}
+                    )
+                    continue
+
+                # Check session ownership
+                doc_metadata = getattr(doc_info, "doc_metadata", {}) or {}
+                if doc_metadata.get("session_id") != session_id:
+                    results["failed"].append({"id": file_id, "error": "Access denied"})
+                    continue
+
+                db_success = DatabaseService.delete_document(file_id)
+
+                # Delete vectors from Qdrant
+                vector_success = self.vector_db_service.delete_vectors_by_filter(
+                    {"file_id": file_id}
+                )
+
+                # Check if all operations were successful
+                if vector_success and db_success:
+                    results["successful"].append(
+                        {"id": file_id, "message": "Successfully deleted"}
+                    )
+                    results["total_deleted"] += 1
+                else:
+                    # Report partial success
+                    failures = []
+                    if not vector_success:
+                        failures.append("vector database")
+                    if not db_success:
+                        failures.append("database")
 
                     results["failed"].append(
                         {
@@ -565,20 +626,21 @@ class EmbeddingController:
         Toggle the active status of a document in both PostgreSQL and Qdrant
         """
         try:
-            document = DatabaseService.get_document(document_id)
+            document = self.db_service.get_document(document_id)
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
 
-            # Check session ownership
-            if document.get("metadata", {}).get("session_id") != session_id:
+            # Check session ownership - FIXED: access attributes directly, not using .get()
+            doc_metadata = getattr(document, "doc_metadata", {}) or {}
+            if doc_metadata.get("session_id") != session_id:
                 raise HTTPException(status_code=403, detail="Access denied")
 
             # Update metadata
-            metadata = document.get("metadata", {}) or {}
+            metadata = doc_metadata.copy()
             metadata["active"] = active
 
             # Update in PostgreSQL
-            db_success = DatabaseService.update_document_metadata(document_id, metadata)
+            db_success = self.db_service.update_document_metadata(document_id, metadata)
             print(f"PostgreSQL update success: {db_success}")
 
             # Update in Qdrant
@@ -617,15 +679,16 @@ class EmbeddingController:
     async def get_documents(
         self, limit: int = 100, offset: int = 0
     ) -> DocumentListResponse:
-        """
-        Get a list of all documents in the system
-        """
+        """Get a list of all documents in the system"""
         try:
-            documents = DatabaseService.get_documents(limit=limit, offset=offset)
-            total = DatabaseService.count_documents()
+            documents = self.db_service.get_documents(limit=limit, offset=offset)
+            total = self.db_service.count_documents()
+
+            # Convert DocumentPydantic objects to dictionaries
+            document_dicts = [doc.dict() for doc in documents]
 
             return DocumentListResponse(
-                documents=documents, total=total, limit=limit, offset=offset
+                documents=document_dicts, total=total, limit=limit, offset=offset
             )
         except Exception as e:
             raise HTTPException(
@@ -641,7 +704,11 @@ class EmbeddingController:
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found")
 
-            return DocumentResponse(**document)
+            # Convert the DocumentPydantic object to a dictionary first
+            document_dict = document.dict()
+
+            # Then create the DocumentResponse from the dictionary
+            return DocumentResponse(**document_dict)
         except HTTPException:
             raise
         except Exception as e:

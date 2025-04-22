@@ -63,8 +63,20 @@ class EmbeddingService:
         Returns:
             List of text chunks.
         """
-        if not text:
+        # Safety checks
+        if text is None or not isinstance(text, str):
+            print(
+                "Warning: Received None or non-string text for chunking, returning empty list"
+            )
             return []
+
+        if chunk_size is None:
+            print("Warning: chunk_size is None, using default")
+            chunk_size = env.DEFAULT_CHUNK_SIZE
+
+        if overlap is None:
+            print("Warning: overlap is None, using default")
+            overlap = env.DEFAULT_CHUNK_OVERLAP
 
         # Normalize the text: remove extra spaces and line breaks
         text = " ".join(
